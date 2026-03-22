@@ -1,0 +1,103 @@
+pragma language_version >= 0.20;
+
+import CompactStandardLibrary;
+
+// -------------------------------------
+// Todo State
+// -------------------------------------
+
+enum TodoState {
+  ACTIVE,
+  COMPLETED,
+  DELETED
+}
+
+// -------------------------------------
+// Public Ledger
+// -------------------------------------
+
+export ledger owner: Bytes<32>;
+export ledger todoHash: Bytes<32>;
+export ledger state: TodoState;
+export ledger todoCount: Counter;
+
+// -------------------------------------
+// Witness Inputs
+// -------------------------------------
+
+witness secretKey(): Bytes<32>;
+witness todoContent(): Bytes<32>;
+witness nonce(): Bytes<32>;
+
+// -------------------------------------
+// Helper Circuit
+// -------------------------------------
+
+circuit deriveKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>(
+    [pad(32, "midnight:todo:key"), sk]
+  );
+}
+
+// -------------------------------------
+// Constructor
+// -------------------------------------
+
+constructor() {
+  state = TodoState.ACTIVE;
+}
+
+// -------------------------------------
+// Create Todo
+// -------------------------------------
+
+export circuit createTodo(): [] {
+
+  const sk = secretKey();
+  const pk = deriveKey(sk);
+
+  const content = todoContent();
+  const n = nonce();
+
+  const commit = persistentCommit<Bytes<32>>(
+    content,
+    n
+  );
+
+  owner = disclose(pk);
+  todoHash = disclose(commit);
+
+  todoCount += 1;
+
+  state = TodoState.ACTIVE;
+}
+
+// -------------------------------------
+// Complete Todo
+// -------------------------------------
+
+export circuit completeTodo(): [] {
+
+  assert(state == TodoState.ACTIVE, "Todo not active");
+
+  const sk = secretKey();
+  const pk = deriveKey(sk);
+
+  assert(pk == owner, "Only owner can complete");
+
+  state = TodoState.COMPLETED;
+}
+
+// -------------------------------------
+// Delete Todo
+// -------------------------------------
+
+export circuit deleteTodo(): [] {
+
+  const sk = secretKey();
+  const pk = deriveKey(sk);
+
+  assert(pk == owner, "Only owner can delete");
+
+  state = TodoState.DELETED;
+}

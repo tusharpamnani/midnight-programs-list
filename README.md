@@ -27,6 +27,7 @@ Each program is organized in its own dedicated folder:
 |---------|-------------|----------|------------|
 | [Hello World](./compact-hello-world) | Hello World on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Counter](./compact-counter) | Counter on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ❌ |
+| [Escrow](./compact-escrow) | Escrow on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ✅ |
 
 > Programs are being added actively. Watch the repo for updates.
 

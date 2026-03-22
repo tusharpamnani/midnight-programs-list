@@ -1,0 +1,66 @@
+pragma language_version >= 0.20;
+
+import CompactStandardLibrary;
+
+enum VotingState {
+  CREATED,
+  ACTIVE,
+  CLOSED
+}
+
+export ledger owner: Bytes<32>;
+export ledger pollCommitment: Bytes<32>;
+export ledger state: VotingState;
+export ledger voteCount: Counter;
+
+witness secretKey(): Bytes<32>;
+witness voteChoice(): Bytes<32>;
+witness nonce(): Bytes<32>;
+
+circuit deriveKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>(
+    [pad(32, "midnight:voting:key"), sk]
+  );
+}
+
+constructor() {
+  state = VotingState.CREATED;
+}
+
+export circuit createPoll(): [] {
+
+  assert(state == VotingState.CREATED, "Poll already exists");
+
+  const sk = secretKey();
+  const pk = deriveKey(sk);
+
+  owner = disclose(pk);
+
+  state = VotingState.ACTIVE;
+}
+
+export circuit vote(): [] {
+
+  assert(state == VotingState.ACTIVE, "Poll not active");
+
+  const vote = voteChoice();
+  const n = nonce();
+
+  const commit = persistentCommit<Bytes<32>>(vote, n);
+
+  pollCommitment = disclose(commit);
+
+  voteCount += 1;
+}
+
+export circuit closePoll(): [] {
+
+  assert(state == VotingState.ACTIVE, "Poll not active");
+
+  const sk = secretKey();
+  const pk = deriveKey(sk);
+
+  assert(pk == owner, "Only owner can close poll");
+
+  state = VotingState.CLOSED;
+}

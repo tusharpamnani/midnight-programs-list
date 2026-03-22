@@ -1,88 +1,38 @@
-# compact-hello-world
+# 🗳️ compact-voting-app
 
-A Midnight Network application created with `create-mn-app`.
+A privacy-preserving **Voting dApp on Midnight Network** built using the Compact language.
 
-## Getting Started
+This project demonstrates how to build a **secure, zero-knowledge voting system** with commit-reveal logic on Midnight.
 
-### Prerequisites
+---
 
-- Node.js 22+ installed
-- Docker installed (for proof server)
+## 🚀 Getting Started
 
-### Quick Start
+### 📦 Prerequisites
 
-1. **Install dependencies**:
-   ```bash
-   npm install
-   ```
+* **Node.js 22+** installed  
+* **Docker** installed (required for proof server)
 
-2. **Setup and deploy**:
+---
 
-   ```bash
-   npm run setup
-   ```
+## ⚡ Quick Start
 
-   This will:
+### 1. Install dependencies
 
-   - Compile your Compact contract
-   - Deploy contract to Preprod
+```bash
+npm install
 
-3. **Interact with your contract**:
-   ```bash
-   npm run cli
-   ```
 
-### Available Scripts
 
-- `npm run setup` - Start proof server, compile contract, and deploy
-- `npm run compile` - Compile Compact contract
-- `npm run deploy` - Deploy contract to Preprod
-- `npm run cli` - Interactive CLI for contract
-- `npm run check-balance` - Check wallet balance
-- `npm run proof-server:start` - Start proof server (Docker)
-- `npm run proof-server:stop` - Stop proof server
-- `npm run clean` - Clean build artifacts
-
-### Project Structure
-
-```
-compact-hello-world/
+# Project structure 
+compact-voting-app/
 ├── contracts/
-│   ├── hello-world.compact    # Smart contract source
-│   └── managed/               # Compiled artifacts (after compile)
+│   ├── voting.compact        # Voting smart contract
+│   └── managed/              # Compiled artifacts
 ├── src/
 │   ├── deploy.ts             # Deployment script
-│   ├── cli.ts                # Interactive CLI
-│   └── check-balance.ts      # Balance checker
+│   ├── cli.ts                # CLI for voting actions
+│   └── check-balance.ts      # Wallet balance checker
 ├── docker-compose.yml        # Proof server config
-├── deployment.json           # Deployment info (after deploy)
+├── deployment.json           # Deployment details
 └── package.json
-```
-
-### Getting Preprod Tokens
-
-1. Run `npm run deploy` to see your wallet address
-2. Visit [https://faucet.preprod.midnight.network/](https://faucet.preprod.midnight.network/)
-3. Enter your address to receive test tokens (tNight)
-
-### Learn More
-
-- [Midnight Documentation](https://docs.midnight.network)
-- [Compact Language Guide](https://docs.midnight.network/compact)
-- [Tutorial Series](https://docs.midnight.network/tutorials)
-
-## Contract Overview
-
-This project includes a simple "Hello World" contract that:
-
-- Stores a message on the blockchain
-- Allows reading the current message
-- Demonstrates basic Midnight functionality
-
-The contract uses:
-
-- **Public ledger state** for the message
-- **Zero-knowledge proofs** for transactions
-- **Privacy-preserving** architecture
-
-Happy coding! 🌙

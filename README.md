@@ -28,6 +28,9 @@ Each program is organized in its own dedicated folder:
 | [Hello World](./compact-hello-world) | Hello World on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Counter](./compact-counter) | Counter on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Escrow](./compact-escrow) | Escrow on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ✅ |
+| [Todo](./compact-todo) | Todo App on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ❌ |
+| [Voting](./compact-voting) | Voting App on Midnight | `Compact` `Commit-Reveal` `ZK Proofs` `CLI` | 🟢 ❌ |
+| [Calculator](./compact-calculator) | Calculator on Midnight | `Compact` `Witness Function` `Verification` `CLI` | 🟢 ❌ |
 
 > Programs are being added actively. Watch the repo for updates.
 

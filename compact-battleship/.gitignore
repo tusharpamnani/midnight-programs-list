@@ -16,7 +16,7 @@ build/
 .env.production.local
 
 # Contract artifacts
-**/contracts/managed/
+contracts/managed/
 
 # Deployment info
 deployment.json
@@ -50,7 +50,3 @@ coverage/
 # Temporary files
 tmp/
 temp/
-
-test.txt
-
-**midnight-level-db

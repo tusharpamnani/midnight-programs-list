@@ -32,6 +32,8 @@ Each program is organized in its own dedicated folder:
 | [Voting](./compact-voting) | Voting App on Midnight | `Compact` `Commit-Reveal` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Calculator](./compact-calculator) | Calculator on Midnight | `Compact` `Witness Function` `Verification` `CLI` | 🟢 ❌ |
 | [Token Transfers](./compact-token-transfers) | Token Transfers on Midnight | `Compact` `Mint` `Shielded` `Unshielded` `CLI` | 🟢 ❌ |
+| [Bulletin Board](./compact-bulletin-board) | Bulletin Board on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ❌ |
+| [Battleship](./compact-battleship) | Battleship on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ❌ |
 
 > Programs are being added actively. Watch the repo for updates.
 

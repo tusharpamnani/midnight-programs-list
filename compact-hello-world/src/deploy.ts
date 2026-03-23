@@ -18,29 +18,32 @@ import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-pri
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { setNetworkId, getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { toHex } from '@midnight-ntwrk/midnight-js-utils';
-import * as ledger from '@midnight-ntwrk/ledger-v7';
-import { unshieldedToken } from '@midnight-ntwrk/ledger-v7';
+import * as ledger from '@midnight-ntwrk/ledger-v8';
+import { unshieldedToken } from '@midnight-ntwrk/ledger-v8';
 import { WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
-import { DustWallet } from '@midnight-ntwrk/wallet-sdk-dust-wallet';
 import { HDWallet, Roles, generateRandomSeed } from '@midnight-ntwrk/wallet-sdk-hd';
-import { ShieldedWallet } from '@midnight-ntwrk/wallet-sdk-shielded';
 import { createKeystore, InMemoryTransactionHistoryStorage, PublicKey, UnshieldedWallet } from '@midnight-ntwrk/wallet-sdk-unshielded-wallet';
 import { CompiledContract } from '@midnight-ntwrk/compact-js';
+import { initWalletWithSeed } from './index.js';
 
 // Enable WebSocket for GraphQL subscriptions
 // @ts-expect-error Required for wallet sync
 globalThis.WebSocket = WebSocket;
 
-// Set network to preprod
-setNetworkId('preprod');
+// Set network to undeployed (local)
+setNetworkId('undeployed');
 
-// Preprod network configuration
+// Local network configuration
+const INDEXER_PORT = Number.parseInt(process.env['INDEXER_PORT'] ?? '8088', 10);
+const NODE_PORT = Number.parseInt(process.env['NODE_PORT'] ?? '9944', 10);
+const PROOF_SERVER_PORT = Number.parseInt(process.env['PROOF_SERVER_PORT'] ?? '6300', 10);
+
 const CONFIG = {
-  indexer: 'https://indexer.preprod.midnight.network/api/v3/graphql',
-  indexerWS: 'wss://indexer.preprod.midnight.network/api/v3/graphql/ws',
-  node: 'https://rpc.preprod.midnight.network',
-  proofServer: 'http://127.0.0.1:6300',
-  faucetUrl: 'https://faucet.preprod.midnight.network/',
+  indexer: `http://localhost:${INDEXER_PORT}/api/v3/graphql`,
+  indexerWS: `ws://localhost:${INDEXER_PORT}/api/v3/graphql/ws`,
+  node: `http://localhost:${NODE_PORT}`,
+  proofServer: `http://localhost:${PROOF_SERVER_PORT}`,
+  faucetUrl: 'http://localhost:8080', // Default local faucet
 };
 
 // ─── Proof Server Health Check ─────────────────────────────────────────────────
@@ -93,45 +96,7 @@ const compiledContract = CompiledContract.make('hello-world', HelloWorld.Contrac
 
 // ─── Wallet Functions ──────────────────────────────────────────────────────────
 
-function deriveKeys(seed: string) {
-  const hdWallet = HDWallet.fromSeed(Buffer.from(seed, 'hex'));
-  if (hdWallet.type !== 'seedOk') throw new Error('Invalid seed');
-  const result = hdWallet.hdWallet.selectAccount(0).selectRoles([Roles.Zswap, Roles.NightExternal, Roles.Dust]).deriveKeysAt(0);
-  if (result.type !== 'keysDerived') throw new Error('Key derivation failed');
-  hdWallet.hdWallet.clear();
-  return result.keys;
-}
-
-async function createWallet(seed: string) {
-  const keys = deriveKeys(seed);
-  const networkId = getNetworkId();
-  const shieldedSecretKeys = ledger.ZswapSecretKeys.fromSeed(keys[Roles.Zswap]);
-  const dustSecretKey = ledger.DustSecretKey.fromSeed(keys[Roles.Dust]);
-  const unshieldedKeystore = createKeystore(keys[Roles.NightExternal], networkId);
-
-  const walletConfig = {
-    networkId,
-    indexerClientConnection: { indexerHttpUrl: CONFIG.indexer, indexerWsUrl: CONFIG.indexerWS },
-    provingServerUrl: new URL(CONFIG.proofServer),
-    relayURL: new URL(CONFIG.node.replace(/^http/, 'ws')),
-  };
-
-  const shieldedWallet = ShieldedWallet(walletConfig).startWithSecretKeys(shieldedSecretKeys);
-  const unshieldedWallet = UnshieldedWallet({
-    networkId,
-    indexerClientConnection: walletConfig.indexerClientConnection,
-    txHistoryStorage: new InMemoryTransactionHistoryStorage(),
-  }).startWithPublicKey(PublicKey.fromKeyStore(unshieldedKeystore));
-  const dustWallet = DustWallet({
-    ...walletConfig,
-    costParameters: { additionalFeeOverhead: 300_000_000_000_000n, feeBlocksMargin: 5 },
-  }).startWithSecretKey(dustSecretKey, ledger.LedgerParameters.initialParameters().dust);
-
-  const wallet = new WalletFacade(shieldedWallet, unshieldedWallet, dustWallet);
-  await wallet.start(shieldedSecretKeys, dustSecretKey);
-
-  return { wallet, shieldedSecretKeys, dustSecretKey, unshieldedKeystore };
-}
+// Wallet initialization is now handled by initWalletWithSeed in src/index.ts
 
 // Workaround for wallet SDK signRecipe bug
 function signTransactionIntents(tx: { intents?: Map<number, any> }, signFn: (payload: Uint8Array) => ledger.Signature, proofMarker: 'proof' | 'pre-proof'): void {
@@ -154,7 +119,7 @@ function signTransactionIntents(tx: { intents?: Map<number, any> }, signFn: (pay
   }
 }
 
-async function createProviders(walletCtx: ReturnType<typeof createWallet> extends Promise<infer T> ? T : never) {
+async function createProviders(walletCtx: Awaited<ReturnType<typeof initWalletWithSeed>>) {
   const state = await Rx.firstValueFrom(walletCtx.wallet.state().pipe(Rx.filter((s) => s.isSynced)));
 
   const walletProvider = {
@@ -166,24 +131,28 @@ async function createProviders(walletCtx: ReturnType<typeof createWallet> extend
         { shieldedSecretKeys: walletCtx.shieldedSecretKeys, dustSecretKey: walletCtx.dustSecretKey },
         { ttl: ttl ?? new Date(Date.now() + 30 * 60 * 1000) },
       );
-      const signFn = (payload: Uint8Array) => walletCtx.unshieldedKeystore.signData(payload);
+      const signFn = (payload: Uint8Array) => (walletCtx.unshieldedKeystore as any).signData(payload);
       signTransactionIntents(recipe.baseTransaction, signFn, 'proof');
       if (recipe.balancingTransaction) signTransactionIntents(recipe.balancingTransaction, signFn, 'pre-proof');
-      return walletCtx.wallet.finalizeRecipe(recipe);
+      return walletCtx.wallet.finalizeRecipe(recipe) as any;
     },
     submitTx: (tx: any) => walletCtx.wallet.submitTransaction(tx) as any,
-  };
+  } as any;
 
   const zkConfigProvider = new NodeZkConfigProvider(zkConfigPath);
 
   return {
-    privateStateProvider: levelPrivateStateProvider({ privateStateStoreName: 'hello-world-state', walletProvider }),
+    privateStateProvider: levelPrivateStateProvider({
+      privateStateStoreName: 'hello-world-state',
+      privateStoragePasswordProvider: () => Promise.resolve('a-very-strong-password-at-least-16-chars-long'),
+      accountId: walletCtx.unshieldedKeystore.getBech32Address().toString(),
+    }) as any,
     publicDataProvider: indexerPublicDataProvider(CONFIG.indexer, CONFIG.indexerWS),
     zkConfigProvider,
     proofProvider: httpClientProofProvider(CONFIG.proofServer, zkConfigProvider),
-    walletProvider,
+    walletProvider: walletProvider,
     midnightProvider: walletProvider,
-  };
+  } as any;
 }
 
 // ─── Main Deploy Script ────────────────────────────────────────────────────────
@@ -237,8 +206,8 @@ async function main() {
       } else {
         const choice = await rl.question('  [1] Create new wallet\n  [2] Restore from seed\n  > ');
         seed = choice.trim() === '2'
-          ? await rl.question('\n  Enter your 64-character seed: ')
-          : toHex(Buffer.from(generateRandomSeed()));
+          ? await rl.question('\n  Enter your 128-character seed: ')
+          : toHex(Buffer.from(generateRandomSeed(512)));
 
         if (choice.trim() !== '2') {
           console.log(`\n  ⚠️  SAVE THIS SEED (you'll need it later):\n  ${seed}\n`);
@@ -247,8 +216,8 @@ async function main() {
     } else {
       const choice = await rl.question('  [1] Create new wallet\n  [2] Restore from seed\n  > ');
       seed = choice.trim() === '2'
-        ? await rl.question('\n  Enter your 64-character seed: ')
-        : toHex(Buffer.from(generateRandomSeed()));
+        ? await rl.question('\n  Enter your 128-character seed: ')
+        : toHex(Buffer.from(generateRandomSeed(512)));
 
       if (choice.trim() !== '2') {
         console.log(`\n  ⚠️  SAVE THIS SEED (you'll need it later):\n  ${seed}\n`);
@@ -256,10 +225,12 @@ async function main() {
     }
 
     console.log('  Creating wallet...');
-    const walletCtx = await createWallet(seed.trim());
+    const walletCtx = await initWalletWithSeed(Buffer.from(seed.trim(), 'hex'));
 
     console.log('  Syncing with network...');
-    const state = await Rx.firstValueFrom(walletCtx.wallet.state().pipe(Rx.throttleTime(5000), Rx.filter((s) => s.isSynced)));
+    const state = await Rx.firstValueFrom(
+      walletCtx.wallet.state().pipe(Rx.throttleTime(5000), Rx.filter((s: any) => s.isSynced)),
+    );
     const address = walletCtx.unshieldedKeystore.getBech32Address();
     const balance = state.unshielded.balances[unshieldedToken().raw] ?? 0n;
 
@@ -288,7 +259,7 @@ async function main() {
     console.log('─── Step 3: DUST Token Setup ───────────────────────────────────\n');
     const dustState = await Rx.firstValueFrom(walletCtx.wallet.state().pipe(Rx.filter((s) => s.isSynced)));
 
-    if (dustState.dust.walletBalance(new Date()) === 0n) {
+    if (dustState.dust.balance(new Date()) === 0n) {
       const nightUtxos = dustState.unshielded.availableCoins.filter((c: any) => !c.meta?.registeredForDustGeneration);
       if (nightUtxos.length > 0) {
         console.log('  Registering for DUST generation...');
@@ -302,7 +273,7 @@ async function main() {
 
       console.log('  Waiting for DUST tokens...');
       await Rx.firstValueFrom(
-        walletCtx.wallet.state().pipe(Rx.throttleTime(5000), Rx.filter((s) => s.isSynced), Rx.filter((s) => s.dust.walletBalance(new Date()) > 0n)),
+        walletCtx.wallet.state().pipe(Rx.throttleTime(5000), Rx.filter((s: any) => s.isSynced), Rx.filter((s: any) => s.dust.balance(new Date()) >= 50n)),
       );
     }
     console.log('  DUST tokens ready!\n');
@@ -346,11 +317,12 @@ async function main() {
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        deployed = await deployContract(providers, {
+        deployed = await deployContract(providers as any, {
           compiledContract,
           privateStateId: 'helloWorldState',
           initialPrivateState: {},
-        });
+          args: [],
+        } as any);
         break; // Success - exit retry loop
       } catch (err: any) {
         const errMsg = err?.message || err?.toString() || '';
@@ -380,10 +352,10 @@ async function main() {
         }
 
         // Check if it's a DUST-related error (must check "Not enough Dust" specifically)
-        if (fullError.includes('Not enough Dust')) {
+        if (fullError.includes('Not enough Dust') || fullError.includes('could not balance dust')) {
           // Get current DUST balance
           const currentState = await Rx.firstValueFrom(walletCtx.wallet.state().pipe(Rx.filter((s) => s.isSynced)));
-          const dustBalance = currentState.dust.walletBalance(new Date());
+          const dustBalance = currentState.dust.balance(new Date());
 
           if (attempt < MAX_RETRIES) {
             console.log(`  ⏳ DUST balance: ${dustBalance.toLocaleString()} (need more for tx fees)`);
@@ -407,7 +379,7 @@ async function main() {
             console.log('  │      (DUST accumulates as blocks are produced)            │');
             console.log('  │                                                           │');
             console.log('  │  [2] Send DUST from existing wallet to this address:      │');
-            console.log(`  │      ${address.slice(0, 50)}...  │`);
+            console.log(`  │      ${address.toString().slice(0, 50)}...  │`);
             console.log('  │                                                           │');
             console.log('  │  [3] Import wallet with DUST (choose option 2 on retry)   │');
             console.log('  │                                                           │');
@@ -446,7 +418,7 @@ async function main() {
     const deploymentInfo = {
       contractAddress,
       seed,
-      network: 'preprod',
+      network: 'local',
       deployedAt: new Date().toISOString(),
     };
 

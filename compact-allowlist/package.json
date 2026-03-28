@@ -1,0 +1,46 @@
+{
+  "name": "zk-allowlist",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "zk": "tsx src/zk-cli.ts",
+    "compile": "compact compile contracts/zk-allowlist.compact contracts/managed/zk-allowlist",
+    "deploy": "tsx src/deploy.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:edge": "vitest run tests/02-merkle-tree-edge-cases.test.ts tests/03-proof-forgery.test.ts",
+    "test:zk": "vitest run tests/04-nullifier-attacks.test.ts tests/05-privacy-leaks.test.ts tests/09-contract-simulation.test.ts",
+    "test:fuzz": "vitest run tests/06-boundary-fuzz.test.ts tests/10-stress-benchmarks.test.ts",
+    "test:bench": "vitest run tests/10-stress-benchmarks.test.ts"
+  },
+  "dependencies": {
+    "@midnight-ntwrk/compact-js": "^2.5.0",
+    "@midnight-ntwrk/compact-runtime": "0.15.0",
+    "@midnight-ntwrk/ledger-v8": "8.0.3",
+    "@midnight-ntwrk/midnight-js-contracts": "4.0.2",
+    "@midnight-ntwrk/midnight-js-http-client-proof-provider": "4.0.2",
+    "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "4.0.2",
+    "@midnight-ntwrk/midnight-js-level-private-state-provider": "4.0.2",
+    "@midnight-ntwrk/midnight-js-network-id": "4.0.2",
+    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "4.0.2",
+    "@midnight-ntwrk/midnight-js-types": "4.0.2",
+    "@midnight-ntwrk/midnight-js-utils": "4.0.2",
+    "@midnight-ntwrk/wallet-sdk-address-format": "3.1.0",
+    "@midnight-ntwrk/wallet-sdk-dust-wallet": "3.0.0",
+    "@midnight-ntwrk/wallet-sdk-facade": "3.0.0",
+    "@midnight-ntwrk/wallet-sdk-hd": "3.0.1",
+    "@midnight-ntwrk/wallet-sdk-shielded": "2.1.0",
+    "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "2.1.0",
+    "@types/ws": "^8.18.1",
+    "rxjs": "^7.8.2",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^4.1.2",
+    "fast-check": "^4.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.2"
+  }
+}

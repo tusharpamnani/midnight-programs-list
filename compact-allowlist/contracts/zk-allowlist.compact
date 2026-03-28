@@ -1,0 +1,68 @@
+pragma language_version 0.22;
+
+import CompactStandardLibrary;
+
+// Circuit parameters of exported circuits are treated as potential witness
+// data by Compact's disclosure checker. Any value written to the ledger or
+// passed to a ledger operation must be wrapped in disclose() to explicitly
+// declare the intent to make that value public.
+//
+// Public ledger state:
+//   - merkle_root:     current allowlist Merkle root
+//   - used_nullifiers: set of consumed nullifiers (replay protection)
+//
+// Witnesses (implemented in TypeScript by the DApp):
+//   - getMerkleRoot(): root computed from the prover's local Merkle path
+//   - getNullifier():  nullifier computed from the prover's local secret+context
+//
+// Circuits:
+//   - setRoot(new_root):              update the on-chain Merkle root
+//   - verifyAndUse(nullifier, root):  verify membership proof, consume nullifier
+
+// ─── Ledger  ─── 
+
+export ledger merkle_root: Bytes<32>;
+export ledger used_nullifiers: Set<Bytes<32>>;
+
+// ─── Witnesses  ───
+// Implemented in TypeScript; values are proven in ZK but never revealed on-chain.
+
+witness getMerkleRoot(): Bytes<32>;
+witness getNullifier(): Bytes<32>;
+
+// ─── Circuits  ───
+
+// Set or update the on-chain Merkle root.
+// new_root is a public input: disclose() declares the intent to write it to ledger.
+export circuit setRoot(new_root: Bytes<32>): [] {
+  merkle_root.write(disclose(new_root));
+}
+
+// Verify a ZK membership proof and consume its nullifier.
+//
+// Public inputs (go on-chain, so must be disclose()-wrapped at ledger ops):
+//   - nullifier:  hash(len(secret) || secret || context)
+//   - proof_root: Merkle root the proof was generated against
+
+// Private witnesses (proven by proof server, never revealed on-chain):
+//   - getMerkleRoot() → root computed from the prover's local Merkle path
+//   - getNullifier()  → nullifier computed from the prover's local secret+context
+export circuit verifyAndUse(nullifier: Bytes<32>, proof_root: Bytes<32>): [] {
+  // Witness: prover's locally-computed root must match the public proof_root
+  const witnessed_root = getMerkleRoot();
+  assert(witnessed_root == proof_root, "Witness root mismatch");
+
+  // The public proof_root must match the stored on-chain root
+  assert(proof_root == merkle_root.read(), "Root does not match on-chain root");
+
+  // Witness: prover's locally-computed nullifier must match the submitted one
+  const witnessed_nullifier = getNullifier();
+  assert(witnessed_nullifier == nullifier, "Witness nullifier mismatch");
+
+  // Nullifier must not have been consumed before.
+  // disclose() here because nullifier (a circuit param) is passed to a ledger op.
+  assert(!used_nullifiers.member(disclose(nullifier)), "Nullifier already used");
+
+  // Consume the nullifier: .insert() mutates in place.
+  used_nullifiers.insert(disclose(nullifier));
+}

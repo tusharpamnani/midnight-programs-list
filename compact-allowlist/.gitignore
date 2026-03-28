@@ -1,0 +1,7 @@
+/node_modules
+/data
+/contracts/managed
+/dist
+/midnight-level-db
+/deployment.json
+first-draft.txt

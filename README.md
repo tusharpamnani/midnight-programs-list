@@ -36,6 +36,7 @@ Each program is organized in its own dedicated folder:
 | [Battleship](./compact-battleship) | Battleship on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Allowlist](./compact-allowlist) | Allowlist on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ✅ |
 | [Bonding Curve](./midnight-bonding-curve) | Bonding Curve on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ✅ |
+| [Quadratic Voting](./compact-quadratic-voting) | Quadratic Voting on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ❌ |
 
 > Programs are being added actively. Watch the repo for updates.
 

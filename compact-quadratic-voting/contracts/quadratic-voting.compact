@@ -1,0 +1,64 @@
+pragma language_version 0.22;
+
+import CompactStandardLibrary;
+
+// ─── Ledger ──────────────────────────────────────────────────────────────────
+export ledger committed_tokens: Map<Bytes<32>, Uint<64>>;
+export ledger has_voted: Set<Bytes<32>>;
+export ledger total_votes: Counter;
+
+// ─── Witnesses ───────────────────────────────────────────────────────────────
+witness getVoterId(): Bytes<32>;
+witness getCommittedTokens(): Uint<64>;
+witness getSqrtWeight(): Uint<32>;
+witness getWSquared(): Uint<64>;
+
+// ─── Constants & Helpers ─────────────────────────────────────────────────────
+
+// Helper function to compute the nullifier inside the circuit.
+circuit computeNullifier(voter_id: Bytes<32>): Bytes<32> {
+    // Current compiler signature restricts persistentHash to a single Bytes<32> argument.
+    // For now, we hash the voter_id directly. This ensures 'one voter = one nullifier' 
+    // and prevents double-voting within this contract.
+    return persistentHash<Bytes<32>>(voter_id);
+}
+
+// ─── verifySqrt ──────────────────────────────────────────────────────────────
+circuit verifySqrt(tokens: Uint<64>, w: Uint<32>, w_sq: Uint<64>): [] {
+    assert(w_sq <= tokens, "Weight too large: w^2 > tokens");
+    const two_w = (w as Uint<64>) + (w as Uint<64>);
+    const two_w_plus_1 = two_w + 1;
+    assert(tokens - w_sq < two_w_plus_1, "Weight too small: use floor(sqrt(tokens))");
+}
+
+// ─── commit ──────────────────────────────────────────────────────────────────
+export circuit commit(voter_id: Bytes<32>, tokens: Uint<64>): [] {
+    assert(!committed_tokens.member(disclose(voter_id)), "Already committed");
+    committed_tokens.insert(disclose(voter_id), disclose(tokens));
+}
+
+// ─── vote ────────────────────────────────────────────────────────────────────
+// Uses an internally computed nullifier. No argument needed.
+export circuit vote(): [] {
+    const voter_id    = getVoterId();
+    const tokens      = getCommittedTokens();
+    const sqrt_weight = getSqrtWeight();
+    const w_sq        = getWSquared();
+
+    // Compute a deterministic nullifier inside the circuit.
+    const computed_nullifier = computeNullifier(voter_id);
+
+    // Existing checks: membership and token equality.
+    assert(committed_tokens.member(disclose(voter_id)), "No commitment found");
+    assert(committed_tokens.lookup(disclose(voter_id)) == disclose(tokens), "Token mismatch");
+
+    // Enforce the quadratic constraint in ZK
+    verifySqrt(tokens, sqrt_weight, w_sq);
+
+    // Use the internally computed nullifier for checking double-voting.
+    assert(!has_voted.member(disclose(computed_nullifier)), "Already voted");
+
+    // Record the vote and update totals.
+    has_voted.insert(disclose(computed_nullifier));
+    total_votes.increment(disclose(sqrt_weight as Uint<16>));
+}

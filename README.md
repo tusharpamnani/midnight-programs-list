@@ -35,6 +35,7 @@ Each program is organized in its own dedicated folder:
 | [Bulletin Board](./compact-bulletin-board) | Bulletin Board on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Battleship](./compact-battleship) | Battleship on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Allowlist](./compact-allowlist) | Allowlist on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ✅ |
+| [Bonding Curve](./midnight-bonding-curve) | Bonding Curve on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ✅ |
 
 > Programs are being added actively. Watch the repo for updates.
 

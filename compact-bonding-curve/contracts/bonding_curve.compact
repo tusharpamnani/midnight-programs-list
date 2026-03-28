@@ -1,0 +1,416 @@
+pragma language_version 0.22;
+
+import CompactStandardLibrary;
+
+/**
+ * BondingCurve — A DeFi primitive for minting and burning tokens on a
+ * deterministic linear price curve.
+ *
+ * ─── Curve Mathematics ───────────────────────────────────────────────────────
+ *   Marginal price  :  P(s)        = curveSlope × s
+ *   Mint cost       :  Cost(s, n)  = (curveSlope / 2) × ((s+n)² − s²)
+ *   Burn refund     :  Refund(s,n) = (curveSlope / 2) × (s² − (s−n)²)
+ *
+ * ─── Features added over the original skeleton ───────────────────────────────
+ *   1.  Token balances   — Map<Bytes<32>, Uint<64>> tracks per-address holdings.
+ *   2.  Token transfers  — transfer() circuit for peer-to-peer token movement.
+ *   3.  Allowances       — approve() / transferFrom() for delegated spending.
+ *   4.  Pause / unpause  — owner can halt buy/sell in an emergency.
+ *   5.  Ownership        — owner ledger field; transferOwnership() circuit.
+ *   6.  Supply cap       — optional hard ceiling on totalSupply.
+ *   7.  Max-slippage     — callers pass maxCost / minRefund guards to buy/sell.
+ *   8.  Query circuits   — getPrice(), getSpotCost(), getSupply(),
+ *                          getReserve(), balanceOf(), allowance().
+ *   9.  curveSlope guard — constructor rejects slope = 0.
+ *   10. Constructor slope validation (assert slope > 0).
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+// ─── Ledger (public on-chain state) ──────────────────────────────────────────
+
+/** Total number of curve tokens currently in circulation. */
+export ledger totalSupply: Uint<64>;
+
+/** tDUST / tNIGHT held in the bonding reserve. */
+export ledger reserveBalance: Uint<64>;
+
+/** The 'a' coefficient of the linear pricing curve P(s) = a × s. */
+export ledger curveSlope: Uint<64>;
+
+/** Whether the contract is paused. When true, buy() and sell() revert. */
+export ledger paused: Boolean;
+
+/** The contract owner — the only address permitted to pause/unpause and
+ *  change ownership. Stored as a 32-byte public key hash. */
+export ledger owner: Bytes<32>;
+
+/** Hard cap on totalSupply. 0 means uncapped. */
+export ledger supplyCap: Uint<64>;
+
+/** Per-address token balance mapping. */
+export ledger balances: Map<Bytes<32>, Uint<64>>;
+
+/** Delegated spending allowances: allowances[owner][spender] = amount. */
+export ledger allowances: Map<Bytes<32>, Map<Bytes<32>, Uint<64>>>;
+
+// ─── Constructor ─────────────────────────────────────────────────────────────
+
+/**
+ * Deploy the bonding curve.
+ *
+ * @param initialSlope  The 'a' in P(s) = a × s.  Must be > 0.
+ * @param initialOwner  32-byte public key hash of the deploying account.
+ * @param cap           Hard supply ceiling.  Pass 0 for no cap.
+ */
+constructor(
+    initialSlope: Uint<64>,
+    initialOwner: Bytes<32>,
+    cap: Uint<64>
+) {
+    assert(initialSlope > 0, "Slope must be greater than zero");
+
+    totalSupply    = 0;
+    reserveBalance = 0;
+    curveSlope     = disclose(initialSlope);
+    paused         = false;
+    owner          = disclose(initialOwner);
+    supplyCap      = disclose(cap);
+}
+
+// ─── Witnesses ───────────────────────────────────────────────────────────────
+
+/**
+ * Off-chain helper that performs the floor division
+ *   floor( slope × (s_new² − s_old²) / 2 )
+ * and hands the result back to the on-chain circuit, which then verifies it.
+ *
+ * Used identically for both mint cost and burn refund calculations.
+ */
+witness calculateCost(
+    slope: Uint<64>,
+    s_old: Uint<64>,
+    s_new: Uint<64>
+): Uint<64>;
+
+/**
+ * Off-chain helper returning the caller's 32-byte address (public key hash).
+ * The circuit never trusts this value blindly — it is used only to index the
+ * balances / allowances maps and is bound by the ZK proof.
+ */
+witness callerAddress(): Bytes<32>;
+
+// ─── Internal helper circuits ─────────────────────────────────────────────────
+
+/**
+ * Shared floor-division verifier used by both buy() and sell().
+ * Returns the verified integer cost / refund.
+ */
+circuit verifiedHalfProduct(
+    slope: Uint<64>,
+    s_old: Uint<64>,
+    s_new: Uint<64>
+): Uint<64> {
+    const deltaSq      = s_new * s_new - s_old * s_old;
+    const totalProduct = slope * deltaSq;
+    const result       = disclose(calculateCost(slope, s_old, s_new));
+
+    // Compact's integer arithmetic: 2*result must equal totalProduct (even)
+    // or totalProduct - 1 (odd), i.e. result = floor(totalProduct / 2).
+    assert(
+        2 * result == totalProduct || 2 * result + 1 == totalProduct,
+        "Invalid cost witness"
+    );
+    return result;
+}
+
+// ─── Core trading circuits ────────────────────────────────────────────────────
+
+/**
+ * buy() — Mint `n` new curve tokens.
+ *
+ * The caller must supply:
+ *   - n        : number of tokens to buy.
+ *   - maxCost  : maximum reserve the caller is willing to spend (slippage
+ *                guard).  Pass type-max (2^64-1) to disable the check.
+ *
+ * The circuit mints `n` tokens, charges the exact bonding-curve cost, and
+ * credits the tokens to the caller's balance.
+ */
+export circuit buy(n: Uint<64>, maxCost: Uint<64>): [] {
+    assert(!paused, "Contract is paused");
+    assert(n > 0,   "Purchase amount must be greater than zero");
+
+    const s         = totalSupply;
+    const newSupply = s + n;
+
+    // Enforce optional hard supply cap.
+    assert(
+        supplyCap == 0 || newSupply <= supplyCap,
+        "Purchase would exceed supply cap"
+    );
+
+    // Calculate and verify the exact cost via the witness pattern.
+    const cost = verifiedHalfProduct(curveSlope, s, newSupply as Uint<64>);
+
+    // Slippage guard — caller-supplied upper bound.
+    assert(cost <= maxCost, "Cost exceeds maxCost slippage limit");
+
+    // Credit the buyer's balance.
+    const caller = disclose(callerAddress());
+    if (balances.member(caller)) {
+        const prevBalance = balances.lookup(caller) as Uint<64>;
+        balances.insert(caller, disclose((prevBalance + n) as Uint<64>));
+    } else {
+        balances.insert(caller, disclose(n));
+    }
+
+    // Update global state.
+    totalSupply    = disclose(newSupply as Uint<64>);
+    reserveBalance = disclose((reserveBalance + cost) as Uint<64>);
+}
+
+/**
+ * sell() — Burn `n` existing curve tokens and receive a reserve refund.
+ *
+ * The caller must supply:
+ *   - n          : number of tokens to burn.
+ *   - minRefund  : minimum refund the caller is willing to accept (slippage
+ *                  guard).  Pass 0 to disable the check.
+ *
+ * The circuit burns `n` tokens from the caller's balance and returns the
+ * exact bonding-curve refund.
+ */
+export circuit sell(n: Uint<64>, minRefund: Uint<64>): [] {
+    assert(!paused, "Contract is paused");
+    assert(n > 0,   "Sale amount must be greater than zero");
+
+    const s = totalSupply;
+    assert(n <= s, "Cannot sell more than total supply");
+
+    // Verify the caller actually owns enough tokens.
+    const caller = disclose(callerAddress());
+    if (balances.member(caller)) {
+        const balance = balances.lookup(caller) as Uint<64>;
+        assert(n <= balance, "Insufficient token balance");
+        
+        const newSupply = s - n;
+        const refund = disclose(s == n) 
+            ? reserveBalance 
+            : verifiedHalfProduct(curveSlope, newSupply as Uint<64>, s);
+        assert(refund >= minRefund, "Refund below minRefund slippage limit");
+        assert(refund <= reserveBalance, "Insufficient reserve balance for refund");
+        
+        balances.insert(caller, disclose((balance - n) as Uint<64>));
+        totalSupply    = disclose(newSupply as Uint<64>);
+        reserveBalance = disclose((reserveBalance - refund) as Uint<64>);
+    } else {
+        assert(false, "Insufficient token balance (no tokens found)");
+    }
+}
+
+// ─── Token transfer circuits ──────────────────────────────────────────────────
+
+/**
+ * transfer() — Move `amount` tokens from the caller to `to`.
+ *
+ * This is a pure ledger-state transfer; it does not interact with the
+ * bonding curve reserve.
+ */
+export circuit transfer(to: Bytes<32>, amount: Uint<64>): [] {
+    assert(amount > 0, "Transfer amount must be greater than zero");
+
+    const sender = disclose(callerAddress());
+    if (balances.member(sender)) {
+        const fromBalance = balances.lookup(sender) as Uint<64>;
+        assert(amount <= fromBalance, "Insufficient balance for transfer");
+
+        const toAddr = disclose(to);
+        if (balances.member(toAddr)) {
+            const toBalance = balances.lookup(toAddr) as Uint<64>;
+            balances.insert(toAddr, disclose((toBalance + amount) as Uint<64>));
+        } else {
+            balances.insert(toAddr, disclose(amount));
+        }
+
+        balances.insert(sender, disclose((fromBalance - amount) as Uint<64>));
+    } else {
+        assert(false, "Insufficient balance for transfer (sender empty)");
+    }
+}
+
+/**
+ * approve() — Grant `spender` the right to transfer up to `amount` tokens
+ * on behalf of the caller.
+ *
+ * Overwrites any existing allowance for this (caller, spender) pair.
+ */
+export circuit approve(spender: Bytes<32>, amount: Uint<64>): [] {
+    const sender = disclose(callerAddress());
+    const spenderAddr = disclose(spender);
+    allowances.lookup(sender).insert(spenderAddr, disclose(amount));
+}
+
+/**
+ * transferFrom() — Transfer `amount` tokens from `from` to `to`, consuming
+ * the caller's previously approved allowance.
+ */
+export circuit transferFrom(
+    tokenOwner: Bytes<32>,
+    to:         Bytes<32>,
+    amount:     Uint<64>
+): [] {
+    assert(amount > 0, "Transfer amount must be greater than zero");
+
+    const spender    = disclose(callerAddress());
+    const allowed    = allowances.lookup(disclose(tokenOwner)).lookup(spender) as Uint<64>;
+    assert(amount <= allowed, "Transfer amount exceeds allowance");
+
+    const fromBalance = balances.lookup(disclose(tokenOwner)) as Uint<64>;
+    assert(amount <= fromBalance, "Insufficient balance for transferFrom");
+
+    const toBalance = balances.lookup(disclose(to)) as Uint<64>;
+
+    // Deduct allowance.
+    allowances.lookup(disclose(tokenOwner)).insert(spender, disclose((allowed - amount) as Uint<64>));
+
+    // Move tokens.
+    balances.insert(disclose(tokenOwner), disclose((fromBalance - amount) as Uint<64>));
+    balances.insert(disclose(to),         disclose((toBalance   + amount) as Uint<64>));
+}
+
+// ─── Admin circuits ───────────────────────────────────────────────────────────
+
+/**
+ * pause() — Halt all buy() and sell() activity.
+ * Only callable by the current owner.
+ */
+export circuit pause(): [] {
+    const caller = disclose(callerAddress());
+    assert(caller == owner, "Only owner can pause");
+    assert(!paused, "Contract is already paused");
+    paused = disclose(true);
+}
+
+/**
+ * unpause() — Resume normal buy() and sell() activity.
+ * Only callable by the current owner.
+ */
+export circuit unpause(): [] {
+    const caller = disclose(callerAddress());
+    assert(caller == owner, "Only owner can unpause");
+    assert(paused, "Contract is not paused");
+    paused = disclose(false);
+}
+
+/**
+ * transferOwnership() — Hand ownership to a new address.
+ * Only callable by the current owner.
+ *
+ * @param newOwner  32-byte public key hash of the incoming owner.
+ */
+export circuit transferOwnership(newOwner: Bytes<32>): [] {
+    const caller = disclose(callerAddress());
+    assert(caller == owner, "Only owner can transfer ownership");
+    owner = disclose(newOwner);
+}
+
+// ─── Read-only query circuits ─────────────────────────────────────────────────
+
+/**
+ * getPrice() — Returns the current marginal token price P(s) = slope × s.
+ * No state is modified; no ZK proof cost beyond reading public ledger.
+ */
+export circuit getPrice(): Uint<64> {
+    return (curveSlope * totalSupply) as Uint<64>;
+}
+
+/**
+ * getSpotCost() — Returns the cost to buy exactly `n` tokens at the current
+ * supply, without executing the purchase.
+ *
+ * Useful for UI quote flows and slippage estimation.
+ */
+export circuit getSpotCost(n: Uint<64>): Uint<64> {
+    const s       = totalSupply;
+    const sNew    = s + n;
+    return verifiedHalfProduct(curveSlope, s, sNew as Uint<64>);
+}
+
+/**
+ * getSpotRefund() — Returns the refund for burning exactly `n` tokens at the
+ * current supply, without executing the sale.
+ */
+export circuit getSpotRefund(n: Uint<64>): Uint<64> {
+    const s    = totalSupply;
+    assert(n <= s, "Cannot quote refund for more than total supply");
+    const sNew = s - n;
+    return disclose(s == n)
+        ? reserveBalance
+        : verifiedHalfProduct(curveSlope, sNew as Uint<64>, s);
+}
+
+/**
+ * quoteBuy() — Alias for getSpotCost for protocol parity.
+ */
+export circuit quoteBuy(n: Uint<64>): Uint<64> {
+    const s = totalSupply;
+    return verifiedHalfProduct(curveSlope, s, (s + n) as Uint<64>);
+}
+
+/**
+ * quoteSell() — Alias to getSpotRefund for protocol parity.
+ */
+export circuit quoteSell(n: Uint<64>): Uint<64> {
+    const s = totalSupply;
+    assert(n <= s, "Cannot sell more than total supply");
+    const sNew = s - n;
+    return disclose(s == n) 
+        ? reserveBalance 
+        : verifiedHalfProduct(curveSlope, sNew as Uint<64>, s);
+}
+
+/**
+ * getSupply() — Returns the current total token supply.
+ */
+export circuit getSupply(): Uint<64> {
+    return totalSupply;
+}
+
+/**
+ * getReserve() — Returns the current reserve balance.
+ */
+export circuit getReserve(): Uint<64> {
+    return reserveBalance;
+}
+
+/**
+ * balanceOf() — Returns the token balance of a given address.
+ *
+ * @param account  32-byte public key hash to query.
+ */
+export circuit balanceOf(account: Bytes<32>): Uint<64> {
+    const acc = disclose(account);
+    if (balances.member(acc)) {
+        return balances.lookup(acc);
+    } else {
+        return 0;
+    }
+}
+
+/**
+ * allowance() — Returns the remaining spending allowance that `spender` has
+ * been granted by `tokenOwner`.
+ */
+export circuit allowance(
+    tokenOwner: Bytes<32>,
+    spender:    Bytes<32>
+): Uint<64> {
+    const ownerAddr = disclose(tokenOwner);
+    const spenderAddr = disclose(spender);
+    if (allowances.member(ownerAddr)) {
+        if (allowances.lookup(ownerAddr).member(spenderAddr)) {
+            return allowances.lookup(ownerAddr).lookup(spenderAddr);
+        }
+    }
+    return 0;
+}

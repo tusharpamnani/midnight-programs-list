@@ -1,0 +1,6 @@
+/node_modules
+/midnight-level-db-*
+/midnight-level-db
+/dist
+.env
+manualTest.txt

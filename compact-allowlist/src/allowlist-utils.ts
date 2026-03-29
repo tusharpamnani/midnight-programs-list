@@ -7,7 +7,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { MerkleTree } from './merkle-tree.js';
-import { hashLeaf, hashNullifier, hashNode } from './poseidon.js';
+import { hashLeaf, hashNullifier, hashNode, normalizeSecret } from './poseidon.js';
 import type {
   MembersData,
   MemberEntry,
@@ -44,8 +44,9 @@ export function addMember(
   tree: MerkleTree,
   secret: string
 ): { member: MemberEntry; root: string } {
+  const secretNormalized = normalizeSecret(secret);
   // Check if already a member
-  const existingIndex = tree.findLeafIndex(secret);
+  const existingIndex = tree.findLeafIndex(secretNormalized);
   if (existingIndex >= 0) {
     throw new Error(`Secret already in tree at index ${existingIndex}`);
   }
@@ -55,8 +56,8 @@ export function addMember(
 
   // Create member entry
   const member: MemberEntry = {
-    secret,
-    leaf,
+    secret: secretNormalized,
+    leaf: leaf,
     leafIndex: index,
     addedAt: new Date().toISOString(),
   };
@@ -142,7 +143,9 @@ export function generateProof(
   context: string
 ): ProofOutput {
   // Find the member's leaf index
-  const leafIndex = tree.findLeafIndex(secret);
+  const secretNormalized = normalizeSecret(secret);
+  // Find the member's leaf index
+  const leafIndex = tree.findLeafIndex(secretNormalized);
   if (leafIndex < 0) {
     throw new Error('Secret not found in the tree. Add the member first.');
   }
@@ -151,8 +154,8 @@ export function generateProof(
   const merklePath = tree.getMerklePath(leafIndex);
 
   // Compute leaf and nullifier
-  const leaf = hashLeaf(secret);
-  const nullifier = hashNullifier(secret, context);
+  const leaf = hashLeaf(secretNormalized);
+  const nullifier = hashNullifier(secretNormalized, context);
   const root = tree.root;
 
   // Verify the path locally before creating the proof
@@ -167,7 +170,7 @@ export function generateProof(
       JSON.stringify({
         // Private witness (would be consumed by proof server, not sent on-chain)
         witness: {
-          secret,
+          secret: secretNormalized,
           leaf,
           leafIndex,
           siblings: merklePath.siblings,
@@ -225,8 +228,9 @@ export function verifyProof(proof: ProofOutput): {
 
     const { secret, leaf, siblings, pathIndices } = witnessData.witness;
 
+    const secretNormalized = normalizeSecret(secret);
     // Verify leaf = hash(secret)
-    const computedLeaf = hashLeaf(secret);
+    const computedLeaf = hashLeaf(secretNormalized);
     checks.leafValid = computedLeaf === leaf;
 
     // Recompute root from path
@@ -242,7 +246,7 @@ export function verifyProof(proof: ProofOutput): {
     checks.rootMatches = currentHash === proof.publicInputs.root;
 
     // Verify nullifier
-    const computedNullifier = hashNullifier(secret, proof.meta.context);
+    const computedNullifier = hashNullifier(secretNormalized, proof.meta.context);
     checks.nullifierValid = computedNullifier === proof.publicInputs.nullifier;
 
     const valid = Object.values(checks).every(Boolean);

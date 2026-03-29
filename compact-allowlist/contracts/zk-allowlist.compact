@@ -2,67 +2,176 @@ pragma language_version 0.22;
 
 import CompactStandardLibrary;
 
-// Circuit parameters of exported circuits are treated as potential witness
-// data by Compact's disclosure checker. Any value written to the ledger or
-// passed to a ledger operation must be wrapped in disclose() to explicitly
-// declare the intent to make that value public.
-//
-// Public ledger state:
-//   - merkle_root:     current allowlist Merkle root
-//   - used_nullifiers: set of consumed nullifiers (replay protection)
-//
-// Witnesses (implemented in TypeScript by the DApp):
-//   - getMerkleRoot(): root computed from the prover's local Merkle path
-//   - getNullifier():  nullifier computed from the prover's local secret+context
-//
-// Circuits:
-//   - setRoot(new_root):              update the on-chain Merkle root
-//   - verifyAndUse(nullifier, root):  verify membership proof, consume nullifier
+/**
+ * ============================================================================
+ *                              ZK ALLOWLIST
+ * ============================================================================
+ * A privacy-preserving membership proof system constructed on Midnight.
+ *
+ * This contract manages a on-chain Merkle Root representing a set of allowed 
+ * identities Members can prove their inclusion in Zero-Knowledge by 
+ * providing a secret and a Merkle path to the current root without revealing 
+ * their identity.
+ * 
+ * Each membership usage generates a deterministic nullifier to prevent double-voting/use.
+ * ============================================================================
+ */
 
-// ─── Ledger  ─── 
 
+// --- Ledger State (Public on-chain data) ---
+
+/** 
+ * Current Merkle Root representing the set of allowed identities
+ */
 export ledger merkle_root: Bytes<32>;
+
+/** 
+ * Admin commitment (hash of admin secret)
+ * Only the entity that knows the secret can call authorized circuits (Governance)
+ */
+export ledger admin_commitment: Bytes<32>;
+
+/** 
+ * Map of used nullifiers to prevent replay attacks (double-usage).
+ */
 export ledger used_nullifiers: Set<Bytes<32>>;
 
-// ─── Witnesses  ───
-// Implemented in TypeScript; values are proven in ZK but never revealed on-chain.
 
-witness getMerkleRoot(): Bytes<32>;
-witness getNullifier(): Bytes<32>;
+// --- Private Witnesses (Prover-side secret inputs) ---
 
-// ─── Circuits  ───
+/** Prover's secret token Only hashed to leaf on-chain */
+witness getSecret(): Bytes<32>;
 
-// Set or update the on-chain Merkle root.
-// new_root is a public input: disclose() declares the intent to write it to ledger.
+/** Context for this proof (e.g., mint_v1) Prevents cross-context nullifier reuse */
+witness getContext(): Bytes<32>;
+
+/** 20 sibling nodes for the sparse Merkle path reconstruction */
+witness getSiblings(): Vector<20, Bytes<32>>;
+
+/** 20-bit path choice (0=left-child, 1=right-child) for Merkle branching */
+witness getPathIndices(): Vector<20, Boolean>;
+
+/** Secret credential needed to authorize governance updates (setRoot) */
+witness getAdminSecret(): Bytes<32>;
+
+
+// --- Helper Circuits (Internal logic) ---
+
+/** 
+ * Recomputes the parent node hash
+ * node = persistentHash(tag || left || right) 
+ */
+circuit hashLevelNode(is_right: Boolean, current: Bytes<32>, sibling: Bytes<32>): Bytes<32> {
+  if (is_right) {
+    return persistentHash<Vector<3, Bytes<32>>>([
+      pad(32, "zk-allowlist:node:v1"),
+      sibling,
+      current
+    ]);
+  } else {
+    return persistentHash<Vector<3, Bytes<32>>>([
+      pad(32, "zk-allowlist:node:v1"),
+      current,
+      sibling
+    ]);
+  }
+}
+
+
+// --- Administrator Commands (Governance) ---
+
+/** 
+ * One-time setup to pin the contract administrator.
+ * @param initial_commitment The hash of the administrator's secret credential.
+ */
+export circuit setup(initial_commitment: Bytes<32>): [] {
+  // Ensure we are not overwriting an existing admin (default value is zero-bytes)
+  assert(admin_commitment.read() == pad(32, ""), "Setup failed: Administrator already configured");
+  admin_commitment.write(disclose(initial_commitment));
+}
+
+/** 
+ * Updates the Merkle root on-chain 
+ * Authorization: Restricted to the holder of the administrator's secret credential.
+ */
 export circuit setRoot(new_root: Bytes<32>): [] {
+  // 1 Authenticate Authorization in Zero-Knowledge
+  // Circuit proves the prover knows the secret whose hash matches the admin_commitment
+  const derived_commitment = persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "zk-allowlist:admin:v1"),
+    getAdminSecret()
+  ]);
+  assert(derived_commitment == admin_commitment.read(), "Unauthorized: Caller is not the contract administrator");
+  
+  // 2 Perform state update (disclosed so the network can see the new public root)
   merkle_root.write(disclose(new_root));
 }
 
-// Verify a ZK membership proof and consume its nullifier.
-//
-// Public inputs (go on-chain, so must be disclose()-wrapped at ledger ops):
-//   - nullifier:  hash(len(secret) || secret || context)
-//   - proof_root: Merkle root the proof was generated against
 
-// Private witnesses (proven by proof server, never revealed on-chain):
-//   - getMerkleRoot() → root computed from the prover's local Merkle path
-//   - getNullifier()  → nullifier computed from the prover's local secret+context
-export circuit verifyAndUse(nullifier: Bytes<32>, proof_root: Bytes<32>): [] {
-  // Witness: prover's locally-computed root must match the public proof_root
-  const witnessed_root = getMerkleRoot();
-  assert(witnessed_root == proof_root, "Witness root mismatch");
+// --- Main Verification Circuit ---
 
-  // The public proof_root must match the stored on-chain root
-  assert(proof_root == merkle_root.read(), "Root does not match on-chain root");
+/**
+ * Proves membership in Zero-Knowledge and records unique usage
+ * Identity remains anonymous; only validity and non-reuse are revealed
+ *
+ * @param nullifier The public nullifier derived from (secret, context) to prevent double-usage
+ */
+export circuit verifyAndUse(nullifier: Bytes<32>): [] {
+  
+  // 1 Witness Loading
+  // Retrieve private inputs necessary for the SNARK circuit to recompute internal hashes.
+  const secret = getSecret();
+  const context = getContext();
+  const siblings = getSiblings();
+  const path_indices = getPathIndices();
 
-  // Witness: prover's locally-computed nullifier must match the submitted one
-  const witnessed_nullifier = getNullifier();
-  assert(witnessed_nullifier == nullifier, "Witness nullifier mismatch");
+  // 2 Leaf Computation
+  // Derive the member's unique leaf from their private secret.
+  const leaf = persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "zk-allowlist:leaf:v1"),
+    secret
+  ]);
 
-  // Nullifier must not have been consumed before.
-  // disclose() here because nullifier (a circuit param) is passed to a ledger op.
-  assert(!used_nullifiers.member(disclose(nullifier)), "Nullifier already used");
+  // 3 Nullifier Verification
+  // Re-derive the nullifier inside the circuit to ensure it is correctly anchored to (secret, context).
+  const computed_nullifier = persistentHash<Vector<3, Bytes<32>>>([
+    pad(32, "zk-allowlist:nullifier:v1"),
+    secret,
+    context
+  ]);
+  assert(computed_nullifier == nullifier, "Proof integrity error: Provided nullifier is not anchored to secret");
 
-  // Consume the nullifier: .insert() mutates in place.
+  // 4 Merkle Path Verification (Depth 20)
+  // Reconstruct the Merkle root from the private path.
+  // We use manual unrolling for depth 20 for maximum circuit compatibility.
+  const h0 = hashLevelNode(path_indices[0], leaf, siblings[0]);
+  const h1 = hashLevelNode(path_indices[1], h0, siblings[1]);
+  const h2 = hashLevelNode(path_indices[2], h1, siblings[2]);
+  const h3 = hashLevelNode(path_indices[3], h2, siblings[3]);
+  const h4 = hashLevelNode(path_indices[4], h3, siblings[4]);
+  const h5 = hashLevelNode(path_indices[5], h4, siblings[5]);
+  const h6 = hashLevelNode(path_indices[6], h5, siblings[6]);
+  const h7 = hashLevelNode(path_indices[7], h6, siblings[7]);
+  const h8 = hashLevelNode(path_indices[8], h7, siblings[8]);
+  const h9 = hashLevelNode(path_indices[9], h8, siblings[9]);
+  const h10 = hashLevelNode(path_indices[10], h9, siblings[10]);
+  const h11 = hashLevelNode(path_indices[11], h10, siblings[11]);
+  const h12 = hashLevelNode(path_indices[12], h11, siblings[12]);
+  const h13 = hashLevelNode(path_indices[13], h12, siblings[13]);
+  const h14 = hashLevelNode(path_indices[14], h13, siblings[14]);
+  const h15 = hashLevelNode(path_indices[15], h14, siblings[15]);
+  const h16 = hashLevelNode(path_indices[16], h15, siblings[16]);
+  const h17 = hashLevelNode(path_indices[17], h16, siblings[17]);
+  const h18 = hashLevelNode(path_indices[18], h17, siblings[18]);
+  const calculated_root = hashLevelNode(path_indices[19], h18, siblings[19]);
+
+  // 5 Consensus Linkage
+  // Core valid member check: Does the computed root match the root currently stored in the ledger?
+  // Redundant proof_root input removed as requested.
+  assert(calculated_root == merkle_root.read(), "Membership verification failed: Path does not reach on-chain root");
+
+  // 6 Record Nullifier (Double-usage protection)
+  // Fail if already used; otherwise insert into used_nullifiers set.
+  assert(!used_nullifiers.member(disclose(nullifier)), "Dual-usage detected: Nullifier already recorded on-chain");
   used_nullifiers.insert(disclose(nullifier));
 }

@@ -66,9 +66,19 @@ type ZkAllowlistModule = typeof import('../contracts/managed/zk-allowlist/contra
 // Using `any` for return type avoids fighting the SDK's complex generic inference
 // on withWitnesses: the runtime behavior is what matters and it works correctly.
 
+export function pad32(str: string): Uint8Array {
+  const buf = new Uint8Array(32);
+  const strBuf = Buffer.from(str, 'utf-8');
+  buf.set(strBuf.slice(0, 32));
+  return buf;
+}
+
 export type ZkAllowlistWitnesses = {
-  getMerkleRoot: (...args: any[]) => any;
-  getNullifier: (...args: any[]) => any;
+  getSecret: (context: any) => [any, Uint8Array];
+  getContext: (context: any) => [any, Uint8Array];
+  getSiblings: (context: any) => [any, Uint8Array[]];
+  getPathIndices: (context: any) => [any, boolean[]];
+  getAdminSecret: (context: any) => [any, Uint8Array];
 };
 
 const zkAllowlistModulePromise = (async () => {
@@ -104,8 +114,11 @@ export function createCompiledContract(witnesses: ZkAllowlistWitnesses) {
 // deployment so stubs are never invoked. They just satisfy the constructor.
 
 export const stubWitnesses: ZkAllowlistWitnesses = {
-  getMerkleRoot: () => [undefined, new Uint8Array(32)],
-  getNullifier: () => [undefined, new Uint8Array(32)],
+  getSecret: () => [undefined, new Uint8Array(32)],
+  getContext: () => [undefined, new Uint8Array(32)],
+  getSiblings: () => [undefined, Array(20).fill(new Uint8Array(32))],
+  getPathIndices: () => [undefined, Array(20).fill(false)],
+  getAdminSecret: () => [undefined, new Uint8Array(32)],
 };
 
 // Pre-built compiled contract with stubs — safe for deployContract().

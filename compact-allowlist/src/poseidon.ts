@@ -1,87 +1,104 @@
-// A pure-TypeScript Poseidon hash implementation for computing Merkle leaves
-// and nullifiers locally. This mirrors the hash function used in the Compact
-// circuit so that roots computed off-chain match on-chain verification.
+// PersistentHash implementation for the ZK allowlist. This uses the same
+// cryptographic primitive as the Compact circuit (Poseidon) so that local roots
+// match on-chain verification.
 
-// We use a simplified Poseidon implementation suitable for the BN254 scalar field,
-// which is the field used by Midnight's ZK backend.
-
+import * as runtime from '@midnight-ntwrk/compact-runtime';
 import { createHash } from 'node:crypto';
 
-/**
- * Poseidon-compatible hash function.
- *
- * Since Midnight's Compact runtime uses its own internal Poseidon implementation
- * for ZK circuits, and the TypeScript side needs a compatible hash for building
- * the Merkle tree locally, we use a deterministic hash that produces 32-byte
- * outputs matching the Bytes<32> type used in the contract.
- *
- * For local tree construction, we use a Poseidon-domain-separated SHA-256 hash.
- * This is sufficient because:
- *   1. The Merkle root stored on-chain is computed locally and set via setRoot()
- *   2. The ZK proof verification in Compact re-derives the root from private inputs
- *   3. Both sides use the same hash function for consistency
- */
+// Types for persistentHash
+const bytes32Type = new runtime.CompactTypeBytes(32);
+const vector2Type = new runtime.CompactTypeVector(2, bytes32Type);
+const vector3Type = new runtime.CompactTypeVector(3, bytes32Type);
 
 /** Domain separation tags for different hash contexts */
 const DOMAIN_LEAF = 'zk-allowlist:leaf:v1';
 const DOMAIN_NODE = 'zk-allowlist:node:v1';
 const DOMAIN_NULLIFIER = 'zk-allowlist:nullifier:v1';
+const DOMAIN_ADMIN = 'zk-allowlist:admin:v1';
+
+/**
+ * Padding string to 32 bytes for Compact compatibility.
+ */
+function pad32(str: string): Uint8Array {
+  const buf = new Uint8Array(32);
+  const strBuf = Buffer.from(str, 'utf-8');
+  buf.set(strBuf.slice(0, 32));
+  return buf;
+}
+
+/**
+ * Normalizes any string into a 32-byte secret.
+ * If already hex(64), use as-is. Otherwise, SHA-256 it.
+ */
+export function normalizeSecret(secret: string): string {
+  if (/^[0-9a-f]{64}$/i.test(secret)) {
+    return secret.toLowerCase();
+  }
+  return createHash('sha256').update(secret).digest('hex');
+}
 
 /**
  * Hash a single value (for leaf computation).
- * leaf = hash(secret)
+ * leaf = persistentHash(tag || secret)
  */
-export function hashLeaf(secret: string): string {
-  const h = createHash('sha256');
-  h.update(DOMAIN_LEAF);
-  h.update(Buffer.from(secret, 'utf-8'));
-  return h.digest('hex');
+export function hashLeaf(secretHex: string): string {
+  const s = normalizeSecret(secretHex);
+  const secretBytes = Uint8Array.from(Buffer.from(s, 'hex'));
+  const tag = pad32(DOMAIN_LEAF);
+  
+  const res = runtime.persistentHash(vector2Type, [tag, secretBytes]);
+  return Buffer.from(res).toString('hex');
 }
 
 /**
  * Hash two children together (for internal Merkle nodes).
- * node = hash(left || right)
+ * node = persistentHash(tag || left || right)
  */
-export function hashNode(left: string, right: string): string {
-  const h = createHash('sha256');
-  h.update(DOMAIN_NODE);
-  h.update(Buffer.from(left, 'hex'));
-  h.update(Buffer.from(right, 'hex'));
-  return h.digest('hex');
+export function hashNode(leftHex: string, rightHex: string): string {
+  const left = Uint8Array.from(Buffer.from(leftHex, 'hex'));
+  const right = Uint8Array.from(Buffer.from(rightHex, 'hex'));
+  const tag = pad32(DOMAIN_NODE);
+  
+  const res = runtime.persistentHash(vector3Type, [tag, left, right]);
+  return Buffer.from(res).toString('hex');
 }
 
 /**
  * Compute nullifier for replay protection.
- * nullifier = hash(domain || len(secret) || secret || context)
- *
- * The 4-byte big-endian length prefix prevents concatenation ambiguity:
- * hash("alice" + "ctx1") !== hash("alic" + "ectx1") because
- * the length-prefix for "alice" (5) differs from "alic" (4).
+ * nullifier = persistentHash(tag || secret || context)
  */
-export function hashNullifier(secret: string, context: string): string {
-  const h = createHash('sha256');
-  h.update(DOMAIN_NULLIFIER);
-  // Length-prefix the secret to prevent concatenation ambiguity
-  const secretBuf = Buffer.from(secret, 'utf-8');
-  const lenBuf = Buffer.alloc(4);
-  lenBuf.writeUInt32BE(secretBuf.length);
-  h.update(lenBuf);
-  h.update(secretBuf);
-  h.update(Buffer.from(context, 'utf-8'));
-  return h.digest('hex');
+export function hashNullifier(secretHex: string, context: string): string {
+  const s = normalizeSecret(secretHex);
+  const secretBytes = Uint8Array.from(Buffer.from(s, 'hex'));
+  const contextBytes = pad32(context);
+  const tag = pad32(DOMAIN_NULLIFIER);
+  
+  const res = runtime.persistentHash(vector3Type, [tag, secretBytes, contextBytes]);
+  return Buffer.from(res).toString('hex');
+}
+
+/**
+ * Compute the commitment for the contract administrator.
+ */
+export function hashAdminCommitment(secretHex: string): string {
+  const s = normalizeSecret(secretHex);
+  const secretBytes = Uint8Array.from(Buffer.from(s, 'hex'));
+  const tag = pad32(DOMAIN_ADMIN);
+  
+  const res = runtime.persistentHash(vector2Type, [tag, secretBytes]);
+  return Buffer.from(res).toString('hex');
 }
 
 /**
  * Compute the "zero" hash for empty nodes at a given depth.
- * Zero hashes are pre-computed: zeroHash[0] = hash(""), zeroHash[i] = hash(zeroHash[i-1], zeroHash[i-1])
  */
 export function computeZeroHashes(depth: number): string[] {
   const zeros: string[] = new Array(depth + 1);
-  // Level 0 = empty leaf
-  const h = createHash('sha256');
-  h.update(DOMAIN_LEAF);
-  h.update(Buffer.alloc(0));
-  zeros[0] = h.digest('hex');
+  // Level 0: pad to 32 bytes empty string then persistentHash with tag
+  const emptyBytes = new Uint8Array(32);
+  const tagBytes = pad32(DOMAIN_LEAF);
+  const res = runtime.persistentHash(vector2Type, [tagBytes, emptyBytes]);
+  zeros[0] = Buffer.from(res).toString('hex');
 
   for (let i = 1; i <= depth; i++) {
     zeros[i] = hashNode(zeros[i - 1], zeros[i - 1]);

@@ -27,9 +27,16 @@ import {
   cliError,
   output,
 } from './allowlist-utils.js';
+import {
+  hashLeaf,
+  hashNullifier,
+  hashNode,
+  normalizeSecret,
+  hashAdminCommitment,
+} from './poseidon.js';
 import type { ProofOutput } from './types.js';
 import { TREE_DEPTH } from './types.js';
-import { ZkAllowlistWitnesses } from './utils.js';
+import { ZkAllowlistWitnesses, stubWitnesses } from './utils.js';
 
 // ─── Argument Parsing ───
 
@@ -245,7 +252,56 @@ function cmdVerifyProof(): void {
   }
 }
 
+async function cmdSetup(): Promise<void> {
+  const adminSecret = getFlag('admin-secret');
+  if (!adminSecret) {
+    output(cliError('setup', 'Usage: zk setup --admin-secret <secret>'));
+    process.exit(1);
+  }
+
+  try {
+    const commitment = hashAdminCommitment(adminSecret);
+
+    // Load deployment config
+    if (!fs.existsSync('deployment.json')) {
+      output(cliError('setup', 'No deployment.json found. Deploy the contract first.'));
+      process.exit(1);
+    }
+
+    const deployment = JSON.parse(fs.readFileSync('deployment.json', 'utf-8'));
+    const { createWallet, createProviders, compiledContract } = await import('./utils.js');
+    const { findDeployedContract } = await import('@midnight-ntwrk/midnight-js-contracts');
+
+    const walletCtx = await createWallet(deployment.seed);
+    await walletCtx.wallet.waitForSyncedState();
+    const providers = await createProviders(walletCtx);
+
+    const contract = await findDeployedContract(providers, {
+      compiledContract,
+      contractAddress: deployment.contractAddress,
+    });
+
+    // Call setup() on-chain
+    const commitmentBytes = Uint8Array.from(Buffer.from(commitment, 'hex'));
+    const txResult = await contract.callTx.setup(commitmentBytes);
+    const txHash = txResult.public?.txId ?? txResult.public?.txHash ?? 'unknown';
+
+    await walletCtx.wallet.stop();
+
+    output(cliSuccess('setup', { status: 'confirmed', txHash, adminCommitment: commitment }));
+  } catch (err) {
+    output(cliError('setup', err instanceof Error ? err.message : String(err)));
+    process.exit(1);
+  }
+}
+
 async function cmdSetRoot(): Promise<void> {
+  const adminSecret = getFlag('admin-secret');
+  if (!adminSecret) {
+    output(cliError('set-root', 'Usage: zk set-root --admin-secret <secret>'));
+    process.exit(1);
+  }
+
   try {
     const tree = MerkleTree.load();
     const root = tree.root;
@@ -274,16 +330,24 @@ async function cmdSetRoot(): Promise<void> {
 
     // ─── Connect to Midnight ───
 
-    const { createWallet, createProviders, compiledContract } = await import('./utils.js');
+    const { createWallet, createProviders, createCompiledContract } = await import('./utils.js');
     const { findDeployedContract } = await import('@midnight-ntwrk/midnight-js-contracts');
+
+    const adminSecretNormalized = normalizeSecret(adminSecret);
+    const witnesses: ZkAllowlistWitnesses = {
+      ...stubWitnesses,
+      getAdminSecret: (_ctx) => [undefined, Uint8Array.from(Buffer.from(adminSecretNormalized, 'hex'))],
+    };
+
+    const contractWithWitnesses = createCompiledContract(witnesses);
 
     const walletCtx = await createWallet(deployment.seed);
     await walletCtx.wallet.waitForSyncedState();
 
     const providers = await createProviders(walletCtx);
 
-    const contract = await findDeployedContract(providers, {
-      compiledContract,
+    const contract = await findDeployedContract(providers as any, {
+      compiledContract: contractWithWitnesses,
       contractAddress: deployment.contractAddress,
     });
 
@@ -373,13 +437,31 @@ async function cmdSubmitProof(): Promise<void> {
     const { findDeployedContract } = await import('@midnight-ntwrk/midnight-js-contracts');
 
     // Build real witnesses from the proof file.
-    // getMerkleRoot() → the Merkle root the prover computed locally from their path.
-    // getNullifier()  → the nullifier the prover computed locally from secret+context.
-    // These are invoked by the proof server on the local machine to build the ZK
-    // proof: the values themselves never go on-chain.
+    const witnessHexData = JSON.parse(Buffer.from(proof.proof, 'hex').toString('utf-8'));
+    const { secret, siblings, pathIndices } = witnessHexData.witness;
+    const { normalizeSecret } = await import('./poseidon.js');
+    const { pad32 } = await import('./utils.js');
+
+    // The circuit always expects exactly TREE_DEPTH (20) siblings/indices.
+    // Pad shorter paths (e.g. from a smaller test tree) with zero hashes / false.
+    const rawSiblings = siblings.map((s: string) => Uint8Array.from(Buffer.from(s, 'hex')));
+    const paddedSiblings: Uint8Array[] =
+      rawSiblings.length < TREE_DEPTH
+        ? [...rawSiblings, ...Array<Uint8Array>(TREE_DEPTH - rawSiblings.length).fill(new Uint8Array(32))]
+        : rawSiblings;
+
+    const rawIndices = pathIndices.map((i: number) => i === 1);
+    const paddedIndices: boolean[] =
+      rawIndices.length < TREE_DEPTH
+        ? [...rawIndices, ...Array<boolean>(TREE_DEPTH - rawIndices.length).fill(false)]
+        : rawIndices;
+
     const witnesses: ZkAllowlistWitnesses = {
-      getMerkleRoot: (_ctx) => [undefined, Uint8Array.from(Buffer.from(proof.publicInputs.root, 'hex'))],
-      getNullifier: (_ctx) => [undefined, Uint8Array.from(Buffer.from(proof.publicInputs.nullifier, 'hex'))],
+      ...stubWitnesses,
+      getSecret: (_ctx) => [undefined, Uint8Array.from(Buffer.from(normalizeSecret(secret), 'hex'))],
+      getContext: (_ctx) => [undefined, pad32(proof.meta.context)],
+      getSiblings: (_ctx) => [undefined, paddedSiblings],
+      getPathIndices: (_ctx) => [undefined, paddedIndices],
     };
 
     const contractWithWitnesses = createCompiledContract(witnesses);
@@ -404,13 +486,9 @@ async function cmdSubmitProof(): Promise<void> {
     const nullifierBytes = Uint8Array.from(
       Buffer.from(proof.publicInputs.nullifier, 'hex')
     );
-    const rootBytes = Uint8Array.from(
-      Buffer.from(proof.publicInputs.root, 'hex')
-    );
 
     const txResult = await contract.callTx.verifyAndUse(
       nullifierBytes,
-      rootBytes,
     );
 
     const txHash = txResult.public?.txId ?? txResult.public?.txHash ?? 'unknown';
@@ -431,7 +509,6 @@ async function cmdSubmitProof(): Promise<void> {
         txHash,
         contractAddress: deployment.contractAddress,
         nullifier: proof.publicInputs.nullifier,
-        root: proof.publicInputs.root,
       })
     );
   } catch (err) {
@@ -456,7 +533,7 @@ async function cmdSubmitProof(): Promise<void> {
   }
 }
 
-function cmdStatus(): void {
+async function cmdStatus(): Promise<void> {
   try {
     const treeExists = fs.existsSync('data/tree.json');
 
@@ -474,6 +551,32 @@ function cmdStatus(): void {
     const members = loadMembers();
     const nullifiers = loadNullifiers();
 
+    // ─── Fetch On-chain State ───
+    let onChain = { root: 'unknown', admin: 'unknown' };
+    if (fs.existsSync('deployment.json')) {
+      try {
+        const deployment = JSON.parse(fs.readFileSync('deployment.json', 'utf-8'));
+        const { createWallet, createProviders, compiledContract } = await import('./utils.js');
+        const { findDeployedContract } = await import('@midnight-ntwrk/midnight-js-contracts');
+
+        const walletCtx = await createWallet(deployment.seed);
+        const providers = await createProviders(walletCtx);
+        const contract = await findDeployedContract(providers, {
+          compiledContract,
+          contractAddress: deployment.contractAddress,
+        });
+
+        const state = (await (contract as any).state()) as any;
+        onChain.root = Buffer.from(state.merkle_root).toString('hex');
+        onChain.admin = Buffer.from(state.admin_commitment).toString('hex');
+
+        await walletCtx.wallet.stop();
+      } catch (err: any) {
+        onChain.root = `Error: ${err.message}`;
+        onChain.admin = `Error: ${err.message}`;
+      }
+    }
+
     output(
       cliSuccess('status', {
         initialized: true,
@@ -481,9 +584,16 @@ function cmdStatus(): void {
           depth: tree.depth,
           capacity: tree.capacity,
           leafCount: tree.leafCount,
-          root: tree.root,
+          localRoot: tree.root,
+          onChainRoot: onChain.root,
           utilizationPercent:
             ((tree.leafCount / tree.capacity) * 100).toFixed(4) + '%',
+        },
+        governance: {
+          adminCommitment: onChain.admin,
+          contractAddress: fs.existsSync('deployment.json')
+            ? JSON.parse(fs.readFileSync('deployment.json', 'utf-8')).contractAddress
+            : 'not deployed',
         },
         members: {
           total: members.members.length,
@@ -522,9 +632,9 @@ function cmdHelp(): void {
 ║                                                                        ║
 ║  add-member --secret <secret>         Add member to allowlist          ║
 ║                                                                        ║
-║  export-root                          Print current Merkle root        ║
+║  setup --admin-secret <secret>        One-time admin configuration     ║
 ║                                                                        ║
-║  set-root                             Push local root to on-chain      ║
+║  set-root --admin-secret <secret>     Push local root to on-chain      ║
 ║                                                                        ║
 ║  gen-proof                            Generate ZK membership proof     ║
 ║    --secret <secret>                  Member's secret                  ║
@@ -545,8 +655,9 @@ function cmdHelp(): void {
 ║  npx tsx src/zk-cli.ts init                                            ║
 ║  npx tsx src/zk-cli.ts add-member --secret alice                       ║
 ║  npx tsx src/zk-cli.ts add-member --secret bob                         ║
+║  npx tsx src/zk-cli.ts setup --admin-secret admin123                   ║
 ║  npx tsx src/zk-cli.ts export-root                                     ║
-║  npx tsx src/zk-cli.ts set-root                                        ║
+║  npx tsx src/zk-cli.ts set-root --admin-secret admin123                ║
 ║  npx tsx src/zk-cli.ts gen-proof --secret alice --context mint_v1      ║
 ║  npx tsx src/zk-cli.ts verify-proof data/proof.json                    ║
 ║  npx tsx src/zk-cli.ts submit-proof data/proof.json                    ║
@@ -573,6 +684,9 @@ async function main(): Promise<void> {
     case 'set-root':
       await cmdSetRoot();
       break;
+    case 'setup':
+      await cmdSetup();
+      break;
     case 'gen-proof':
       cmdGenProof();
       break;
@@ -583,7 +697,7 @@ async function main(): Promise<void> {
       await cmdSubmitProof();
       break;
     case 'status':
-      cmdStatus();
+      await cmdStatus();
       break;
     case 'help':
     case '--help':

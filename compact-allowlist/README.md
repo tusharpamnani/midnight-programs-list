@@ -1,6 +1,6 @@
 # ZK Allowlist: Privacy-Preserving Membership Proofs on Midnight
 
-[![Generic badge](https://img.shields.io/badge/Compact%20Toolchain-0.30.0-1abc9c.svg)](https://shields.io/) [![Generic badge](https://img.shields.io/badge/midnight--js-4.0.2-blueviolet.svg)](https://shields.io/) [![Generic badge](https://img.shields.io/badge/wallet--sdk--facade-3.0.1-blue.svg)](https://shields.io/) [![Generic badge](https://img.shields.io/badge/Tests%20Cases%20Passed-144-green.svg)](https://shields.io/)
+[![Generic badge](https://img.shields.io/badge/Compact%20Toolchain-0.30.0-1abc9c.svg)](https://shields.io/) [![Generic badge](https://img.shields.io/badge/midnight--js-4.0.2-blueviolet.svg)](https://shields.io/) [![Generic badge](https://img.shields.io/badge/wallet--sdk--facade-3.0.0-blue.svg)](https://shields.io/) [![Generic badge](https://img.shields.io/badge/Tests%20Cases%20Passed-144-green.svg)](https://shields.io/)
 
 A CLI-based Zero-Knowledge Allowlist system that lets users prove membership in a set **without revealing their identity**, built on Midnight's Compact contract language.
 
@@ -19,12 +19,12 @@ A CLI-based Zero-Knowledge Allowlist system that lets users prove membership in 
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-1. A **Merkle tree** is constructed locally, each leaf = `hash(secret)`
-2. The tree **root** is stored on-chain in a Compact contract
-3. A user generates a **ZK proof** proving their secret is in the tree
-4. The proof reveals only the root and a nullifier, **not** the secret, leaf, or position
-5. **Nullifiers** = `hash(len(secret) || secret || context)`, prevents replay attacks
-6. The on-chain contract checks root match, verifies the proof, and records the nullifier
+1. A **Sparse Merkle tree** (depth 20) is constructed locally using `persistentHash` (Poseidon).
+2. The contract is initialized via **`setup(commitment)`**, pinning the administrator's authority.
+3. The Merkle tree **root** is pushed on-chain via **`setRoot(root)`**, authorized by the admin's secret.
+4. A user generates a **ZK proof** locally, proving their secret belongs to a leaf that leads to the public root.
+5. The proof reveals only the nullifier, **not** the secret, leaf, or Merkle path.
+6. The on-chain contract performs **20 levels of Merkle verification** within the ZK circuit to validate membership.
 
 
 ## Flow Overview
@@ -64,7 +64,7 @@ A CLI-based Zero-Knowledge Allowlist system that lets users prove membership in 
                   ▼
         ┌──────────────────────────────┐
         │ Compute Nullifier            │
-        │ = hash(len(s) || s || ctx)   │
+        │ = persistentHash(s, ctx)     │
         └─────────┬────────────────────┘
                   │
                   ▼
@@ -77,8 +77,7 @@ A CLI-based Zero-Knowledge Allowlist system that lets users prove membership in 
         ┌──────────────────────────────┐
         │ On-chain Verification        │
         │                              │
-        │ ✔ Root matches               │
-        │ ✔ Proof valid                │
+        │ ✔ 20-level Merkle ZK proof   │
         │ ✔ Nullifier unused           │
         └─────────┬────────────────────┘
                   │
@@ -113,8 +112,11 @@ npm run zk -- add-member --secret bob
 # Export the Merkle root
 npm run zk -- export-root
 
-# Push the Merkle root to the on-chain contract
-npm run zk -- set-root
+# Securely initialize the contract (one-time setup)
+npm run zk -- setup --admin-secret admin123
+
+# Push the Merkle root to the on-chain contract (authorized by admin)
+npm run zk -- set-root --admin-secret admin123
 
 # Generate a ZK membership proof
 npm run zk -- gen-proof --secret alice --context mint_v1
@@ -138,7 +140,8 @@ npm run zk -- status
 | `zk init --force true` | Overwrite an existing tree |
 | `zk add-member --secret <s>` | Hash secret → leaf, insert into tree, update root |
 | `zk export-root` | Print current Merkle root (JSON) |
-| `zk set-root` | Push local root to on-chain contract |
+| `zk setup --admin-secret <s>` | Pin admin to the contract (one-time) |
+| `zk set-root --admin-secret <s>` | Authenticated Merkle root push |
 | `zk gen-proof --secret <s> --context <c>` | Generate ZK membership proof |
 | `zk gen-proof ... --output <file>` | Custom output path (default: `data/proof.json`) |
 | `zk verify-proof <file>` | Verify a proof locally |
@@ -168,9 +171,12 @@ All commands output **deterministic JSON** for scripting. Example:
 ├── contracts/
 │   └── zk-allowlist.compact        # On-chain Compact contract
 ├── src/
-│   ├── zk-cli.ts                   # CLI entry point (7 commands)
+│   ├── zk-cli.ts                   # CLI entry point (9 commands + help)
+│   ├── deploy.ts                   # Contract deployment script
+│   ├── utils.ts                    # Wallet, providers, compiled contract factory
+│   ├── check-artifacts.ts          # Validates compiled ZK artifacts exist
 │   ├── merkle-tree.ts              # Sparse Merkle tree (depth-configurable)
-│   ├── poseidon.ts                 # Hash functions (leaf, node, nullifier)
+│   ├── poseidon.ts                 # PersistentHash (Poseidon) wrappers
 │   ├── allowlist-utils.ts          # Proof gen/verify, member & nullifier mgmt
 │   └── types.ts                    # Shared TypeScript type definitions
 ├── tests/
@@ -190,30 +196,35 @@ All commands output **deterministic JSON** for scripting. Example:
 │   ├── members.json                # Member registry (dev-only)
 │   ├── nullifiers.json             # Nullifier tracking
 │   └── proof.json                  # Last generated proof
+├── deployment.json                 # Written by deploy.ts; holds contract address & seed
+├── .envrc                          # Environment variables (PRIVATE_STATE_PASSWORD etc.)
+├── tsconfig.json
 ├── vitest.config.ts
 └── package.json
 ```
 
 ## Compact Contract
 
-The `contracts/zk-allowlist.compact` contract stores two pieces of public state:
+The `contracts/zk-allowlist.compact` contract stores three pieces of public state:
 
 | Field | Type | Purpose |
 |-------|------|---------|
-| `root` | `Bytes<32>` | Current Merkle tree root |
-| `used_nullifiers` | `Map<Bytes<32>, Boolean>` | Consumed nullifiers (replay protection) |
+| `merkle_root` | `Bytes<32>` | Current Merkle tree root |
+| `admin_commitment` | `Bytes<32>` | Hash of admin secret (Governance) |
+| `used_nullifiers` | `Set<Bytes<32>>` | Consumed nullifiers (replay protection) |
 
-And exposes two circuits:
+And exposes three circuits:
 
 | Circuit | What it does |
 |---------|--------------|
-| `setRoot(new_root)` | Set or update the Merkle root |
-| `verifyAndUse(nullifier, proof_root)` | Assert root match, check nullifier unused, record it |
+| `setup(commitment)` | One-time admin configuration |
+| `setRoot(new_root)` | Authenticated Merkle root update |
+| `verifyAndUse(nullifier)` | Verify 20-level Merkle path in ZK and record nullifier |
 
 To compile the contract:
 
 ```bash
-npm run compile:allowlist
+npm run compile
 ```
 
 ## Security Model
@@ -239,13 +250,14 @@ Each proof includes a **nullifier** = `hash(len(secret) || secret || context)`:
 - Different secrets + same context → different nullifiers → **accepted**
 
 ### Hashing
+ 
+All cryptographic hashing utilizes **persistentHash (Poseidon)**, the native ZK-friendly hash of the Midnight network, ensuring high performance inside circuits:
+- `zk-allowlist:leaf:v1` : leaf computation (`persistentHash<Vector<2, Bytes<32>>>`)
+- `zk-allowlist:node:v1` : Merkle node computation (`persistentHash<Vector<3, Bytes<32>>>`)
+- `zk-allowlist:nullifier:v1` : nullifier computation (`persistentHash<Vector<3, Bytes<32>>>`)
+- `zk-allowlist:admin:v1` : admin authentication (`persistentHash<Vector<2, Bytes<32>>>`)
 
-All hash functions use **domain-separated SHA-256** with distinct tags:
-- `zk-allowlist:leaf:v1` : leaf computation
-- `zk-allowlist:node:v1` : Merkle node computation
-- `zk-allowlist:nullifier:v1` : nullifier computation
-
-The nullifier hash includes a **4-byte length prefix** before the secret to prevent concatenation ambiguity (e.g., `hash("alice" + "ctx1")` ≠ `hash("alic" + "ectx1")`).
+For witness compatibility, user-provided string secrets are normalized into 32-byte field elements using **SHA-256** before being hashed into the tree.
 
 ### Important
 
@@ -444,21 +456,9 @@ Full contract lifecycle using an in-memory `ContractSimulator`:
 
 ### Bug Found by Tests
 
-The test suite discovered a **concatenation ambiguity vulnerability** in the original `hashNullifier` implementation:
+The proof generator originally used simple string concatenation for hashing, leading to potential ambiguities (e.g., `hash("alice" + "ctx1")` === `hash("alic" + "ectx1")`).
 
-```
-hashNullifier("alice", "ctx1") === hashNullifier("alic", "ectx1")
-```
-
-The hash was `hash(domain || secret || context)` — concatenating `"alice" + "ctx1"` and `"alic" + "ectx1"` both produce `"alicectx1"`.
-
-**Fix**: added a 4-byte big-endian length prefix before the secret:
-
-```
-hash(domain || len(secret) || secret || context)
-```
-
-Now `len("alice") = 5` ≠ `len("alic") = 4`, so the inputs are distinct.
+**Fix**: The system was upgraded to use `persistentHash` with **type-aligned vectors** (e.g., `Vector<3, Bytes<32>>`). Since the Midnight SDK handles the alignment and padding of vector elements individually, concatenation ambiguity is mathematically impossible.
 
 ## Troubleshooting
 

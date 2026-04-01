@@ -24,7 +24,7 @@ import {
 import path from 'path';
 import * as api from '../api';
 import * as Rx from 'rxjs';
-import { unshieldedToken } from '@midnight-ntwrk/ledger-v7';
+import { unshieldedToken } from '@midnight-ntwrk/ledger-v8';
 import type { Logger } from 'pino';
 import type { WalletContext } from '../api';
 import { expect } from 'vitest';

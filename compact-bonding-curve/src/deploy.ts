@@ -23,7 +23,7 @@ import { Buffer } from 'buffer';
 // Midnight.js imports
 import { deployContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { toHex } from '@midnight-ntwrk/midnight-js-utils';
-import { unshieldedToken } from '@midnight-ntwrk/ledger-v7';
+import { unshieldedToken } from '@midnight-ntwrk/ledger-v8';
 import { generateRandomSeed } from '@midnight-ntwrk/wallet-sdk-hd';
 
 // Shared utilities from the utils.ts file
@@ -108,7 +108,7 @@ async function main() {
       walletCtx.wallet.state().pipe(Rx.filter((s) => s.isSynced))
     );
 
-    if (dustState.dust.walletBalance(new Date()) === 0n) {
+    if (dustState.dust.balance(new Date()) === 0n) {
       const nightUtxos = dustState.unshielded.availableCoins.filter(
         (c: any) => !c.meta?.registeredForDustGeneration
       );
@@ -130,7 +130,7 @@ async function main() {
         walletCtx.wallet.state().pipe(
           Rx.throttleTime(5000),
           Rx.filter((s) => s.isSynced),
-          Rx.filter((s) => s.dust.walletBalance(new Date()) > 0n)
+          Rx.filter((s) => s.dust.balance(new Date()) > 0n)
         ),
       );
     }

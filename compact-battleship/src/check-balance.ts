@@ -8,8 +8,8 @@ import { Buffer } from 'buffer';
 
 // Midnight SDK imports
 import { setNetworkId, getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
-import * as ledger from '@midnight-ntwrk/ledger-v7';
-import { unshieldedToken } from '@midnight-ntwrk/ledger-v7';
+import * as ledger from '@midnight-ntwrk/ledger-v8';
+import { unshieldedToken } from '@midnight-ntwrk/ledger-v8';
 import { WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
 import { DustWallet } from '@midnight-ntwrk/wallet-sdk-dust-wallet';
 import { HDWallet, Roles } from '@midnight-ntwrk/wallet-sdk-hd';
@@ -105,7 +105,7 @@ async function main() {
 
     const address = unshieldedKeystore.getBech32Address();
     const tNightBalance = state.unshielded.balances[unshieldedToken().raw] ?? 0n;
-    const dustBalance = state.dust.walletBalance(new Date());
+    const dustBalance = state.dust.balance(new Date());
 
     console.log('\n─── Wallet Details ─────────────────────────────────────────────\n');
     console.log(`  Address: ${address}`);

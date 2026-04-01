@@ -75,7 +75,7 @@ async function main() {
       const state = await Rx.firstValueFrom(
         walletCtx.wallet.state().pipe(Rx.filter((s) => s.isSynced))
       );
-      const dust = state.dust.walletBalance(new Date());
+      const dust = state.dust.balance(new Date());
 
       console.log(chalk.gray('─────────────────────────────────────────────────────────────────'));
       console.log(`${chalk.yellow('  DUST Balance:')} ${dust.toLocaleString()}`);

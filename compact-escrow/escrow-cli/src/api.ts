@@ -7,8 +7,8 @@ import {
   ShieldedCoinPublicKey,
   ShieldedEncryptionPublicKey,
 } from '@midnight-ntwrk/wallet-sdk-address-format';
-import * as ledger from '@midnight-ntwrk/ledger-v7';
-import { unshieldedToken } from '@midnight-ntwrk/ledger-v7';
+import * as ledger from '@midnight-ntwrk/ledger-v8';
+import { unshieldedToken } from '@midnight-ntwrk/ledger-v8';
 import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
@@ -241,7 +241,7 @@ const registerForDustGeneration = async (
 
   // Check if dust is already available (e.g. from a previous designation)
   if (state.dust.availableCoins.length > 0) {
-    const dustBal = state.dust.walletBalance(new Date());
+    const dustBal = state.dust.balance(new Date());
     console.log(`  ✓ Dust tokens already available (${formatBalance(dustBal)} DUST)`);
     return;
   }
@@ -257,7 +257,7 @@ const registerForDustGeneration = async (
         wallet.state().pipe(
           Rx.throttleTime(5_000),
           Rx.filter((s) => s.isSynced),
-          Rx.filter((s) => s.dust.walletBalance(new Date()) > 0n),
+          Rx.filter((s) => s.dust.balance(new Date()) > 0n),
         ),
       ),
     );
@@ -280,7 +280,7 @@ const registerForDustGeneration = async (
       wallet.state().pipe(
         Rx.throttleTime(5_000),
         Rx.filter((s) => s.isSynced),
-        Rx.filter((s) => s.dust.walletBalance(new Date()) > 0n),
+        Rx.filter((s) => s.dust.balance(new Date()) > 0n),
       ),
     ),
   );
@@ -417,7 +417,7 @@ export const getDustBalance = async (
   wallet: WalletFacade,
 ): Promise<{ available: bigint; pending: bigint; availableCoins: number; pendingCoins: number }> => {
   const state = await Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.isSynced)));
-  const available = state.dust.walletBalance(new Date());
+  const available = state.dust.balance(new Date());
   const availableCoins = state.dust.availableCoins.length;
   const pendingCoins = state.dust.pendingCoins.length;
   // Sum pending coin initial values for a rough pending balance
@@ -441,7 +441,7 @@ export const monitorDustBalance = async (wallet: WalletFacade, stopSignal: Promi
       if (stopped) return;
 
       const now = new Date();
-      const available = state.dust.walletBalance(now);
+      const available = state.dust.balance(now);
       const availableCoins = state.dust.availableCoins.length;
       const pendingCoins = state.dust.pendingCoins.length;
 

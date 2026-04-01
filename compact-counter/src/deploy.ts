@@ -18,8 +18,8 @@ import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-pri
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { setNetworkId, getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import { toHex } from '@midnight-ntwrk/midnight-js-utils';
-import * as ledger from '@midnight-ntwrk/ledger-v7';
-import { unshieldedToken } from '@midnight-ntwrk/ledger-v7';
+import * as ledger from '@midnight-ntwrk/ledger-v8';
+import { unshieldedToken } from '@midnight-ntwrk/ledger-v8';
 import { WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
 import { DustWallet } from '@midnight-ntwrk/wallet-sdk-dust-wallet';
 import { HDWallet, Roles, generateRandomSeed } from '@midnight-ntwrk/wallet-sdk-hd';
@@ -288,7 +288,7 @@ async function main() {
     console.log('─── Step 3: DUST Token Setup ───────────────────────────────────\n');
     const dustState = await Rx.firstValueFrom(walletCtx.wallet.state().pipe(Rx.filter((s) => s.isSynced)));
 
-    if (dustState.dust.walletBalance(new Date()) === 0n) {
+    if (dustState.dust.balance(new Date()) === 0n) {
       const nightUtxos = dustState.unshielded.availableCoins.filter((c: any) => !c.meta?.registeredForDustGeneration);
       if (nightUtxos.length > 0) {
         console.log('  Registering for DUST generation...');
@@ -302,7 +302,7 @@ async function main() {
 
       console.log('  Waiting for DUST tokens...');
       await Rx.firstValueFrom(
-        walletCtx.wallet.state().pipe(Rx.throttleTime(5000), Rx.filter((s) => s.isSynced), Rx.filter((s) => s.dust.walletBalance(new Date()) > 0n)),
+        walletCtx.wallet.state().pipe(Rx.throttleTime(5000), Rx.filter((s) => s.isSynced), Rx.filter((s) => s.dust.balance(new Date()) > 0n)),
       );
     }
     console.log('  DUST tokens ready!\n');
@@ -383,7 +383,7 @@ async function main() {
         if (fullError.includes('Not enough Dust')) {
           // Get current DUST balance
           const currentState = await Rx.firstValueFrom(walletCtx.wallet.state().pipe(Rx.filter((s) => s.isSynced)));
-          const dustBalance = currentState.dust.walletBalance(new Date());
+          const dustBalance = currentState.dust.balance(new Date());
 
           if (attempt < MAX_RETRIES) {
             console.log(`  ⏳ DUST balance: ${dustBalance.toLocaleString()} (need more for tx fees)`);

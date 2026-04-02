@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-purple: #a855f7;
+  --color-brand-purple-dark: #7e22ce;
+  --color-brand-blue: #3b82f6;
+  --color-background: #030303;
+  --color-surface: rgba(255, 255, 255, 0.03);
+  --color-foreground: #f8fafc;
+  --color-muted: #94a3b8;
+  
+  --font-sans: var(--font-space), ui-sans-serif, system-ui;
+  --font-mono: var(--font-mono), ui-monospace, Menlo;
+  
+  --animate-flip-3d: flip3d 1.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  --animate-slide-up: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-float: float 6s ease-in-out infinite;
+
+  @keyframes flip3d {
+    0% { transform: rotateY(0deg) scale(1); filter: drop-shadow(0 0 10px rgba(168,85,247,0.2)); }
+    50% { transform: rotateY(180deg) scale(1.1); filter: drop-shadow(0 0 30px rgba(168,85,247,0.6)); }
+    100% { transform: rotateY(360deg) scale(1); filter: drop-shadow(0 0 10px rgba(168,85,247,0.2)); }
+  }
+  @keyframes slideUp {
+    0% { opacity: 0; transform: translateY(20px) scale(0.98); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes float {
+    0% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+    100% { transform: translateY(0px); }
+  }
+}
+
+:root {
+  --background: var(--color-background);
+  --foreground: var(--color-foreground);
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+}
+
+/* Custom premium scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+}

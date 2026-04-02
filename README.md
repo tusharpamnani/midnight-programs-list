@@ -1,16 +1,17 @@
 <div align="center">
   <img src="./banner.svg" alt="Midnight Network" width="180">
   <h2>Midnight Programs Collection</h2>
-  <h4>Privacy-First Smart Contracts on Midnight Network</h4>
+  <h4>Privacy-First Smart Contracts & Full-Stack DApps on Midnight Network</h4>
 </div>
 
-A curated collection of Midnight programs built with Compact and TypeScript
+A curated collection of Midnight programs — from pure Compact contracts to full-stack DApps — built with Compact and TypeScript.
 
 ## Repository Structure
 
 Each program is organized in its own dedicated folder:
 
-- `compact-[programname]` — Pure Compact contract programs
+- `compact-[programname]` — Pure Compact contract programs (CLI-based)
+- `midnight-[projectname]` — Full-stack DApps with frontend + contract
 
 ## Programs Included
 
@@ -23,8 +24,10 @@ Each program is organized in its own dedicated folder:
 - ✅ Tests Available
 - ❌ No Tests
 
-| Program | Description | Features | 🌙 Compact |
-|---------|-------------|----------|------------|
+### Compact Programs (CLI)
+
+| Program | Description | Features | Status |
+|---------|-------------|----------|--------|
 | [Hello World](./compact-hello-world) | Hello World on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Counter](./compact-counter) | Counter on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Escrow](./compact-escrow) | Escrow on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ✅ |
@@ -39,7 +42,13 @@ Each program is organized in its own dedicated folder:
 | [Quadratic Voting](./compact-quadratic-voting) | Quadratic Voting on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Coinflip](./compact-coinflip) | Coinflip game on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ✅ |
 
-> Programs are being added actively. Watch the repo for updates.
+### Full-Stack DApps
+
+| Project | Description | Stack | Status |
+|---------|-------------|-------|--------|
+| [Coinflip](./midnight-coinflip) | Coinflip game on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ✅ |
+
+> Programs and DApps are being added actively. Watch the repo for updates.
 
 ## Prerequisites
 
@@ -51,20 +60,26 @@ Each program is organized in its own dedicated folder:
 ## Getting Started
 
 1. Clone the repository
-```bash
+````bash
 git clone https://github.com/tusharpamnani/midnight-programs-list.git
 cd midnight-programs-list
-```
+````
 
-2. Navigate to a program directory
-```bash
+2. Navigate to a program or DApp directory
+````bash
+# For a CLI program
 cd compact-hello-world
-```
+
+# For a full-stack DApp
+cd midnight-[projectname]
+````
 
 3. Follow the program's own `README.md` for setup and deployment instructions
 
-## Project Structure (Per Program)
-```
+## Project Structure
+
+### CLI Programs (`compact-[programname]/`)
+````
 compact-[programname]/
 ├── contracts/
 │   ├── contract.compact       # Compact smart contract source
@@ -76,7 +91,28 @@ compact-[programname]/
 ├── docker-compose.yml         # Proof server config
 ├── package.json
 └── README.md
-```
+````
+
+### Full-Stack DApps (`midnight-[projectname]/`)
+````
+midnight-[projectname]/
+├── contracts/
+│   ├── contract.compact       # Compact smart contract source
+│   └── managed/               # Compiled artifacts (generated)
+│   ├── src/
+│   │   ├── index.ts           # Contract API & deployment logic
+│   │   └── witnesses.ts       # Witness functions
+│   └── package.json
+├── ui/                        # Frontend application
+│   ├── src/
+│   │   ├── components/        # UI components
+│   │   ├── hooks/             # Midnight.js React hooks
+│   │   └── App.tsx
+│   └── package.json
+├── docker-compose.yml         # Proof server config
+├── package.json
+└── README.md
+````
 
 ## Key Concepts
 
@@ -86,6 +122,12 @@ compact-[programname]/
 - **Public ledger state** — visible on-chain to everyone
 
 Understanding this distinction is essential before diving into any program here.
+
+**Full-stack DApps** connect Compact contracts to a browser-based UI using:
+
+- **Midnight.js SDK** — TypeScript SDK for interacting with contracts and the Midnight wallet
+- **Lace Wallet** — browser extension for signing transactions and managing keys
+- **Proof Server** — local Docker service that generates ZK proofs client-side
 
 ## Getting Preprod Tokens
 

@@ -1,0 +1,19 @@
+pragma language_version 0.22;
+
+export ledger commit_hash: Bytes<32>;
+export ledger revealed: Boolean;
+export ledger revealed_secret: Bytes<32>;
+
+export circuit commit(hash: Bytes<32>): [] {
+  commit_hash = disclose(hash);
+  revealed = disclose(false);
+}
+
+export circuit reveal(secret: Bytes<32>): [] {
+  revealed_secret = disclose(secret);
+  revealed = disclose(true);
+}
+
+export circuit reset(): [] {
+  revealed = disclose(false);
+}

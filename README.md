@@ -33,10 +33,11 @@ Each program is organized in its own dedicated folder:
 | [Calculator](./compact-calculator) | Calculator on Midnight | `Compact` `Witness Function` `Verification` `CLI` | 🟢 ❌ |
 | [Token Transfers](./compact-token-transfers) | Token Transfers on Midnight | `Compact` `Mint` `Shielded` `Unshielded` `CLI` | 🟢 ❌ |
 | [Bulletin Board](./compact-bulletin-board) | Bulletin Board on Midnight | `Compact` `Public State` `ZK Proofs` `CLI` | 🟢 ❌ |
-| [Battleship](./compact-battleship) | Battleship on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ❌ |
+| [Battleship](./compact-battleship) | Battleship game on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ❌ |
 | [Allowlist](./compact-allowlist) | Allowlist on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ✅ |
 | [Bonding Curve](./midnight-bonding-curve) | Bonding Curve on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ✅ |
 | [Quadratic Voting](./compact-quadratic-voting) | Quadratic Voting on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ❌ |
+| [Coinflip](./compact-coinflip) | Coinflip game on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ✅ |
 
 > Programs are being added actively. Watch the repo for updates.
 

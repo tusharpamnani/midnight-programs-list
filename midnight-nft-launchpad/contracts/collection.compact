@@ -1,0 +1,73 @@
+pragma language_version 0.22;
+
+import CompactStandardLibrary;
+
+export ledger collectionName: Bytes<32>;
+export ledger collectionDescription: Bytes<64>;
+export ledger creator: Bytes<32>;
+export ledger maxSupply: Uint<64>;
+export ledger totalSupply: Uint<64>;
+export ledger nextTokenId: Uint<64>;
+
+// Maps tokenId to a commitment of (ownerAddress, metadataHash)
+export ledger tokenCommitments: Map<Uint<64>, Bytes<32>>;
+
+// Shared state for all instances: Creator's address
+witness callerAddress(): Bytes<32>;
+
+// Helper to hash owner and metadata into a Commitment
+circuit hashTokenData(owner: Bytes<32>, metadataHash: Bytes<32>): Bytes<32> {
+    return persistentHash<Vector<2, Bytes<32>>>([owner, metadataHash]);
+}
+
+constructor(name: Bytes<32>, desc: Bytes<64>, cap: Uint<64>) {
+    collectionName = disclose(name);
+    collectionDescription = disclose(desc);
+    maxSupply = disclose(cap);
+    creator = disclose(callerAddress());
+    totalSupply = 0;
+    nextTokenId = 1;
+}
+
+export circuit mint(metadataHash: Bytes<32>): [] {
+    const caller = disclose(callerAddress());
+    const tokenId = nextTokenId;
+    
+    // Check supply cap
+    assert(totalSupply < maxSupply, "Collection supply reached");
+    
+    // Create private commitment
+    const commitment = hashTokenData(caller, metadataHash);
+    tokenCommitments.insert(tokenId, disclose(commitment));
+    
+    totalSupply = disclose((totalSupply + 1) as Uint<64>);
+    nextTokenId = disclose((tokenId + 1) as Uint<64>);
+}
+
+export circuit transfer(tokenId: Uint<64>, newOwner: Bytes<32>, tokenMetaHash: Bytes<32>): [] {
+    const caller = disclose(callerAddress());
+    
+    // Caller must prove they know the metadata that corresponds to their ownership
+    const expectedCommitment = hashTokenData(caller, tokenMetaHash);
+    
+    const pubTokenId = disclose(tokenId);
+    assert(tokenCommitments.member(pubTokenId), "Token does not exist");
+    const currentCommitment = tokenCommitments.lookup(pubTokenId);
+    
+    assert(currentCommitment == expectedCommitment, "Not the owner or invalid metadata");
+    
+    // Create new commitment for the new owner, but keep metadata the same
+    const nextCommitment = hashTokenData(disclose(newOwner), tokenMetaHash);
+    tokenCommitments.insert(pubTokenId, disclose(nextCommitment));
+}
+
+export circuit verifyOwnership(tokenId: Uint<64>, tokenMetaHash: Bytes<32>): [] {
+    const caller = disclose(callerAddress());
+    const expectedCommitment = hashTokenData(caller, tokenMetaHash);
+    
+    const pubTokenId = disclose(tokenId);
+    assert(tokenCommitments.member(pubTokenId), "Token does not exist");
+    const currentCommitment = tokenCommitments.lookup(pubTokenId);
+    
+    assert(currentCommitment == expectedCommitment, "Not the owner or invalid metadata");
+}

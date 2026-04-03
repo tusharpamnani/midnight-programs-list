@@ -47,6 +47,7 @@ Each program is organized in its own dedicated folder:
 | Project | Description | Stack | Status |
 |---------|-------------|-------|--------|
 | [Coinflip](./midnight-coinflip) | Coinflip game on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ✅ |
+| [NFT Launchpad](./midnight-nft-launchpad) | NFT Launchpad on Midnight | `Compact` `Private State` `ZK Proofs` `CLI` | 🟢 ❌ |
 
 > Programs and DApps are being added actively. Watch the repo for updates.
 
